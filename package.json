@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "assets:generate": "node scripts/generate-assets.mjs"
+    "assets:generate": "node scripts/generate-assets.mjs",
+    "cf:dev": "npm run build && npx wrangler dev",
+    "cf:deploy": "npm run build && npx wrangler deploy"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",

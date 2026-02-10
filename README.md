@@ -79,15 +79,26 @@ Runtime texture slots are in:
 
 Replace these with your AI-generated versions to update appearance without changing game code.
 
-## Cloudflare Pages Deployment
-This app is static and can be served directly from Cloudflare Pages.
+## Cloudflare Worker Deployment (Static Assets)
+This repo is configured to deploy as a Cloudflare Worker that serves static assets from `dist/`.
 
-Build settings:
-- Build command: `npm run build`
-- Build output directory: `dist`
-- Node version: 20+
+Config file:
+- `wrangler.toml`
+- Includes custom domain route for `powerball.sirsean.me`
 
-If deploying via Wrangler:
+Local Worker dev:
 ```bash
-npx wrangler pages deploy dist --project-name <your-project-name>
+npm run cf:dev
+```
+
+Deploy:
+```bash
+npm run cf:deploy
+```
+
+After deploy, Cloudflare will bind the Worker to `powerball.sirsean.me` via the custom-domain route in `wrangler.toml`.
+
+First-time auth:
+```bash
+npx wrangler login
 ```
