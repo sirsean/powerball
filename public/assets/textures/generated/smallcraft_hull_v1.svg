@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <pattern id="panel" width="128" height="128" patternUnits="userSpaceOnUse">
+      <rect width="128" height="128" fill="#7a4f3a"/>
+      <rect x="4" y="4" width="120" height="120" fill="none" stroke="#4a3127" stroke-width="2" opacity="0.55"/>
+      <rect x="16" y="18" width="44" height="18" fill="#986043" opacity="0.72"/>
+      <rect x="70" y="18" width="42" height="12" fill="#5f3d2f" opacity="0.72"/>
+      <rect x="18" y="54" width="92" height="24" fill="#6b4635" opacity="0.62"/>
+      <rect x="18" y="88" width="30" height="22" fill="#8a5f49" opacity="0.6"/>
+      <rect x="56" y="88" width="54" height="22" fill="#5b3b2d" opacity="0.5"/>
+    </pattern>
+    <filter id="rust" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.95" numOctaves="3" seed="7"/>
+      <feColorMatrix type="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 0.28 0"/>
+    </filter>
+    <pattern id="scratches" width="96" height="96" patternUnits="userSpaceOnUse">
+      <path d="M-4 20 L46 0" stroke="#d8b38a" stroke-width="1" opacity="0.16"/>
+      <path d="M26 96 L88 54" stroke="#f0d5b2" stroke-width="1" opacity="0.14"/>
+      <path d="M0 78 L62 44" stroke="#271812" stroke-width="1" opacity="0.2"/>
+    </pattern>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#panel)"/>
+  <rect width="1024" height="1024" filter="url(#rust)" opacity="0.62"/>
+  <rect width="1024" height="1024" fill="url(#scratches)"/>
+  <rect width="1024" height="1024" fill="#331f18" opacity="0.12"/>
+</svg>
