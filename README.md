@@ -1,6 +1,6 @@
-# Fringe Drifters Salvage Run
+# Powerball Salvage Run
 
-A 3D browser game prototype set in a gritty cassette-futurist asteroid field. You launch from a passing freighter, dodge drifting rock, grab and drill asteroids, and bring cargo back before the freighter clears the belt and pirate pressure ends the run.
+A 3D browser game prototype set in a gritty cassette-futurist asteroid field. You launch from a passing freighter, dodge drifting rock, grab and drill asteroids, and bring cargo back before the freighter clears the belt and pirate pressure ends the run. Inspired by the Fringe Drifters universe.
 
 ## Current Prototype Features
 - 3D asteroid field with moving and colliding asteroids.
