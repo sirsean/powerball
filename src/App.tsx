@@ -8,10 +8,12 @@ import './App.css'
 import {
   FREIGHTER_DOCK_APPROACH_RADIUS,
   FREIGHTER_DOCK_RADIUS,
+  canDisembarkEarly,
   createHudSnapshot,
   createRuntime,
   getPlayerForward,
   stepRuntime,
+  triggerEarlyDisembark,
   type GameRuntime,
   type HudSnapshot,
   type ResourceId,
@@ -38,6 +40,7 @@ const ASTEROID_GLB_PATHS: string[] = [
   '/assets/models/asteroid_05_v1.glb',
 ]
 const SMOKE_PUFF_COUNT = 9
+const GRABBER_ARM_TARGET_OVERREACH = 0.35
 const CAPTAIN_IMAGE_PATH = '/assets/references/captain-roddard-harbarth.png'
 
 const ASTEROID_TEXTURE_PATHS: Record<ResourceId | 'depleted', string> = {
@@ -410,6 +413,8 @@ function WorldSimulation({ runtime }: { runtime: GameRuntime }) {
   const powerballAsteroidColor = useMemo(() => new Color('#7c4ca6'), [])
   const tempAsteroidColor = useMemo(() => new Color(), [])
   const tempAsteroidBaseColor = useMemo(() => new Color(), [])
+  const tempGrabberGlowColor = useMemo(() => new Color(), [])
+  const grabberLockGlowTint = useMemo(() => new Color('#cf9f6d'), [])
   const playerEngineBaseColor = useMemo(() => new Color('#702411'), [])
   const playerEngineHotColor = useMemo(() => new Color('#ffab52'), [])
   const playerEngineColor = useMemo(() => new Color(), [])
@@ -544,13 +549,11 @@ function WorldSimulation({ runtime }: { runtime: GameRuntime }) {
       material.metalness = 0.18 - depletion * 0.1
 
       if (runtime.grabbedAsteroidId === asteroid.id) {
-        if (oreRatio <= 0.01) {
-          material.emissive.set('#5d3f34')
-          material.emissiveIntensity = 0.85
-        } else {
-          material.emissive.set('#a5763d')
-          material.emissiveIntensity = 0.35 + oreRatio * 0.7
-        }
+        const lockPulse = (Math.sin(runtime.elapsed * 7.2 + asteroid.id * 0.9) + 1) * 0.5
+        const baseGlow = oreRatio <= 0.01 ? 0.12 : 0.08
+        tempGrabberGlowColor.copy(tempAsteroidColor).lerp(grabberLockGlowTint, 0.26)
+        material.emissive.copy(tempGrabberGlowColor)
+        material.emissiveIntensity = baseGlow + lockPulse * 0.08
       } else if (oreRatio <= 0.01) {
         material.emissive.set('#221a18')
         material.emissiveIntensity = 0.26
@@ -605,14 +608,15 @@ function WorldSimulation({ runtime }: { runtime: GameRuntime }) {
         grabberBeamRef.current.visible = true
 
         tempForward.copy(grabbed.position).sub(runtime.playerPosition)
-        const distance = Math.max(0.25, tempForward.length())
-        const midpoint = runtime.playerPosition.clone().add(grabbed.position).multiplyScalar(0.5)
+        const distance = Math.max(0.05, tempForward.length())
+        const armLength = Math.max(0.25, distance + GRABBER_ARM_TARGET_OVERREACH)
 
-        grabberBeamRef.current.position.copy(midpoint)
         tempForward.normalize()
+        tempTarget.copy(runtime.playerPosition).addScaledVector(tempForward, armLength * 0.5)
+        grabberBeamRef.current.position.copy(tempTarget)
         tempQuaternion.setFromUnitVectors(tempUp, tempForward)
         grabberBeamRef.current.quaternion.copy(tempQuaternion)
-        grabberBeamRef.current.scale.set(0.09, distance * 0.5, 0.09)
+        grabberBeamRef.current.scale.set(0.13, armLength * 0.5, 0.13)
       }
     }
 
@@ -721,7 +725,13 @@ function WorldSimulation({ runtime }: { runtime: GameRuntime }) {
 
       <mesh ref={grabberBeamRef} visible={false}>
         <cylinderGeometry args={[1, 1, 1, 10]} />
-        <meshStandardMaterial emissive="#ffd766" color="#d4a93f" emissiveIntensity={1.65} />
+        <meshStandardMaterial
+          color="#8b939c"
+          emissive="#1d2228"
+          emissiveIntensity={0.08}
+          roughness={0.42}
+          metalness={0.88}
+        />
       </mesh>
 
       <mesh ref={freighterDockRingRef}>
@@ -738,7 +748,15 @@ function WorldSimulation({ runtime }: { runtime: GameRuntime }) {
   )
 }
 
-function HudPanel({ hud, pirateDanger }: { hud: HudSnapshot; pirateDanger: PirateDangerProfile | null }) {
+function HudPanel({
+  hud,
+  pirateDanger,
+  onDisembarkEarly,
+}: {
+  hud: HudSnapshot
+  pirateDanger: PirateDangerProfile | null
+  onDisembarkEarly: () => void
+}) {
   const playerHullPercent = Math.max(0, Math.min(100, (hud.hull / hud.maxHull) * 100))
   const pirateHullPercent =
     hud.pirateMaxHull > 0 ? Math.max(0, Math.min(100, (hud.pirateHull / hud.pirateMaxHull) * 100)) : 0
@@ -873,6 +891,12 @@ function HudPanel({ hud, pirateDanger }: { hud: HudSnapshot; pirateDanger: Pirat
               Weapon shot: Q
               <br />
               Grabber: G | Drill: F | Dock/Undock: E
+              {hud.docked && (
+                <>
+                  <br />
+                  Disembark Early: Enter
+                </>
+              )}
             </p>
           </aside>
         )}
@@ -949,6 +973,10 @@ function HudPanel({ hud, pirateDanger }: { hud: HudSnapshot; pirateDanger: Pirat
                 <div className="status-bar" role="presentation">
                   <div className="status-fill repair-fill" style={{ width: `${repairPercent}%` }} />
                 </div>
+                <p className="subtle">Command available while docked: Disembark Early (Enter).</p>
+                <button className="hangar-upgrade-btn" onClick={onDisembarkEarly}>
+                  Disembark Early
+                </button>
               </>
             )}
           </aside>
@@ -1385,6 +1413,13 @@ function App() {
     setScreen('hangar')
   }
 
+  const disembarkEarly = () => {
+    if (!runtime || !canDisembarkEarly(runtime)) return
+    if (triggerEarlyDisembark(runtime)) {
+      setHud(createHudSnapshot(runtime))
+    }
+  }
+
   const returnToHangarFromHullBreach = () => {
     setRuntime(null)
     setHud(null)
@@ -1433,7 +1468,7 @@ function App() {
       </Canvas>
 
       <div className="crt-overlay" />
-      <HudPanel hud={hud} pirateDanger={activeRunDanger} />
+      <HudPanel hud={hud} pirateDanger={activeRunDanger} onDisembarkEarly={disembarkEarly} />
       {showHullBreachModal && (
         <div className="outcome-overlay">
           <section className="outcome-card">

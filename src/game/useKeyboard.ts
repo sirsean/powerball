@@ -9,6 +9,7 @@ const BLOCKED_CODES = new Set([
   'ArrowRight',
   'ArrowUp',
   'ArrowDown',
+  'Enter',
 ])
 
 export function useKeyboard() {

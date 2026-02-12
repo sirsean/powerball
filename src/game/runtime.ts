@@ -83,6 +83,7 @@ export interface GameRuntime {
   maxHull: number
   collisionGrace: number
   grabbedAsteroidId: number | null
+  grabbedAsteroidLocalOffset: Vector3 | null
   drillActive: boolean
   drillAccumulator: number
   asteroidDepletionSerial: number
@@ -229,8 +230,6 @@ const ASTEROID_PIRATE_IMPACT_MIN_SPEED = 1.6
 const ASTEROID_PIRATE_IMPACT_GRACE = 0.58
 const DOCK_REPAIR_PER_SECOND = 14
 const DOCK_UNLOAD_UNITS_PER_SECOND = 3.2
-const GRABBER_ANCHOR_PULL = 4.4
-const GRABBED_ASTEROID_DAMPING_RATE = 0.42
 const ASTEROID_FLING_BASE_SPEED = 8.2
 const ASTEROID_FLING_FORWARD_SCALE = 1.05
 const ASTEROID_FLING_THROTTLE_BONUS = 7
@@ -253,6 +252,7 @@ export const FREIGHTER_INITIAL_POSITION = FREIGHTER_TRANSIT_START.clone()
 export const FREIGHTER_DOCK_RADIUS = DOCK_RADIUS
 export const FREIGHTER_DOCK_APPROACH_RADIUS = DOCK_APPROACH_RADIUS
 export const PIRATE_HULL_MAX = 120
+const WORLD_UP = new Vector3(0, 1, 0)
 
 const CONTROL_CODES = [
   'KeyW',
@@ -267,6 +267,7 @@ const CONTROL_CODES = [
   'KeyQ',
   'KeyE',
   'KeyX',
+  'Enter',
 ] as const
 
 const RESOURCES: Record<ResourceId, ResourceDef> = {
@@ -461,6 +462,7 @@ export function createRuntime(seed = Date.now(), modifiers: Partial<RunModifiers
     maxHull: runMods.maxHull,
     collisionGrace: 0,
     grabbedAsteroidId: null,
+    grabbedAsteroidLocalOffset: null,
     drillActive: false,
     drillAccumulator: 0,
     asteroidDepletionSerial: 0,
@@ -502,6 +504,19 @@ export function createRuntime(seed = Date.now(), modifiers: Partial<RunModifiers
   return runtime
 }
 
+export function canDisembarkEarly(runtime: GameRuntime) {
+  return runtime.status === 'active' && runtime.docked
+}
+
+export function triggerEarlyDisembark(runtime: GameRuntime) {
+  if (!canDisembarkEarly(runtime)) return false
+
+  runtime.status = 'won'
+  runtime.outcomeReason = 'You disembarked safely to the freighter and ended the run early.'
+  addEvent(runtime, runtime.outcomeReason, 'good')
+  return true
+}
+
 function getForwardVector(yaw: number, pitch: number) {
   const cp = Math.cos(pitch)
   return new Vector3(Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp).normalize()
@@ -509,6 +524,36 @@ function getForwardVector(yaw: number, pitch: number) {
 
 export function getPlayerForward(runtime: GameRuntime) {
   return getForwardVector(runtime.playerYaw, runtime.playerPitch)
+}
+
+function getPlayerFrame(runtime: GameRuntime) {
+  const forward = getPlayerForward(runtime)
+  const right = new Vector3().crossVectors(forward, WORLD_UP)
+  if (right.lengthSq() < 0.0001) {
+    right.set(1, 0, 0)
+  } else {
+    right.normalize()
+  }
+  const up = new Vector3().crossVectors(right, forward).normalize()
+  return { forward, right, up }
+}
+
+function worldOffsetToPlayerLocal(runtime: GameRuntime, worldOffset: Vector3) {
+  const { forward, right, up } = getPlayerFrame(runtime)
+  return new Vector3(worldOffset.dot(right), worldOffset.dot(up), worldOffset.dot(forward))
+}
+
+function playerLocalOffsetToWorld(runtime: GameRuntime, localOffset: Vector3) {
+  const { forward, right, up } = getPlayerFrame(runtime)
+  return right
+    .multiplyScalar(localOffset.x)
+    .addScaledVector(up, localOffset.y)
+    .addScaledVector(forward, localOffset.z)
+}
+
+function clearGrabber(runtime: GameRuntime) {
+  runtime.grabbedAsteroidId = null
+  runtime.grabbedAsteroidLocalOffset = null
 }
 
 function isDown(keys: Record<string, boolean>, code: string) {
@@ -593,7 +638,7 @@ function applyFreighterDockActions(runtime: GameRuntime, keys: Record<string, bo
   runtime.dockedPosition.copy(runtime.playerPosition).sub(runtime.freighterPosition)
   runtime.playerVelocity.set(0, 0, 0)
   runtime.throttleLevel = 0
-  runtime.grabbedAsteroidId = null
+  clearGrabber(runtime)
   runtime.unloadAccumulator = 0
   runtime.dockUnloadStartUnits = getCargoUnitCount(runtime) + runtime.powerballCargo
   runtime.dockRepairStartDeficit = Math.max(0, runtime.maxHull - runtime.hull)
@@ -725,7 +770,12 @@ function updatePlayerControlWithInput(runtime: GameRuntime, dt: number, input: C
   clampPlayerToField(runtime)
 }
 
-function updateAsteroidBody(asteroid: AsteroidSim, dt: number) {
+function updateAsteroidBody(runtime: GameRuntime, asteroid: AsteroidSim, dt: number) {
+  if (runtime.grabbedAsteroidId === asteroid.id) {
+    asteroid.velocity.copy(runtime.playerVelocity)
+    return
+  }
+
   asteroid.position.addScaledVector(asteroid.velocity, dt)
   asteroid.velocity.multiplyScalar(Math.pow(ASTEROID_DRAG, dt * 60))
 
@@ -784,7 +834,7 @@ function updateGrabber(runtime: GameRuntime, keys: Record<string, boolean>) {
     } else {
       addEvent(runtime, 'Grabber disengaged.', 'info')
     }
-    runtime.grabbedAsteroidId = null
+    clearGrabber(runtime)
     return
   }
 
@@ -792,6 +842,10 @@ function updateGrabber(runtime: GameRuntime, keys: Record<string, boolean>) {
 
   if (nearest && nearest.surfaceDistance <= runtime.grabberRange) {
     runtime.grabbedAsteroidId = nearest.asteroid.id
+    runtime.grabbedAsteroidLocalOffset = worldOffsetToPlayerLocal(
+      runtime,
+      nearest.asteroid.position.clone().sub(runtime.playerPosition),
+    )
     runtime.drillAccumulator = 0
     addEvent(runtime, `Grabber latched asteroid #${nearest.asteroid.id}.`, 'good')
   } else {
@@ -819,20 +873,22 @@ function findNearestAsteroidForGrabber(runtime: GameRuntime) {
   }
 }
 
-function moveGrabbedAsteroid(runtime: GameRuntime, dt: number) {
+function moveGrabbedAsteroid(runtime: GameRuntime) {
   if (runtime.grabbedAsteroidId === null) return
 
   const asteroid = runtime.asteroids.find((candidate) => candidate.id === runtime.grabbedAsteroidId)
   if (!asteroid) {
-    runtime.grabbedAsteroidId = null
+    clearGrabber(runtime)
     return
   }
 
-  const forward = getPlayerForward(runtime)
-  const anchorPoint = runtime.playerPosition.clone().addScaledVector(forward, asteroid.radius + 4.2)
-  const toAnchor = anchorPoint.sub(asteroid.position)
-  asteroid.velocity.addScaledVector(toAnchor, dt * GRABBER_ANCHOR_PULL)
-  asteroid.velocity.multiplyScalar(Math.exp(-dt * GRABBED_ASTEROID_DAMPING_RATE))
+  const localOffset =
+    runtime.grabbedAsteroidLocalOffset ??
+    worldOffsetToPlayerLocal(runtime, asteroid.position.clone().sub(runtime.playerPosition))
+  runtime.grabbedAsteroidLocalOffset = localOffset
+
+  asteroid.position.copy(runtime.playerPosition).add(playerLocalOffsetToWorld(runtime, localOffset))
+  asteroid.velocity.copy(runtime.playerVelocity)
 }
 
 function sampleAsteroidResource(runtime: GameRuntime, asteroid: AsteroidSim): ResourceId {
@@ -912,7 +968,7 @@ function updateDockedSystems(runtime: GameRuntime, dt: number) {
   runtime.playerPosition.copy(runtime.freighterPosition).add(runtime.dockedPosition)
   runtime.playerVelocity.set(0, 0, 0)
   runtime.throttleLevel = 0
-  runtime.grabbedAsteroidId = null
+  clearGrabber(runtime)
   runtime.drillActive = false
 
   const hadCargoBefore = runtime.cargoValue > 0 || runtime.powerballCargo > 0
@@ -1023,13 +1079,13 @@ function updateDrill(runtime: GameRuntime, dt: number, keys: Record<string, bool
 
   const asteroid = runtime.asteroids.find((candidate) => candidate.id === runtime.grabbedAsteroidId)
   if (!asteroid) {
-    runtime.grabbedAsteroidId = null
+    clearGrabber(runtime)
     runtime.drillActive = false
     return
   }
 
   if (asteroid.oreReserve <= 0) {
-    runtime.grabbedAsteroidId = null
+    clearGrabber(runtime)
     runtime.drillActive = false
     addEvent(runtime, 'Target asteroid depleted. Seek another vein.', 'info')
     return
@@ -1058,7 +1114,7 @@ function updateDrill(runtime: GameRuntime, dt: number, keys: Record<string, bool
     if (asteroid.oreReserve <= 0) {
       asteroid.oreReserve = 0
       runtime.asteroidDepletionSerial += 1
-      runtime.grabbedAsteroidId = null
+      clearGrabber(runtime)
       addEvent(runtime, 'Target asteroid depleted. Grabber auto-released.', 'info')
       break
     }
@@ -1066,10 +1122,14 @@ function updateDrill(runtime: GameRuntime, dt: number, keys: Record<string, bool
 }
 
 function resolveAsteroidCollisions(runtime: GameRuntime) {
+  const grabbedAsteroidId = runtime.grabbedAsteroidId
+
   for (let i = 0; i < runtime.asteroids.length; i += 1) {
     const a = runtime.asteroids[i]
     for (let j = i + 1; j < runtime.asteroids.length; j += 1) {
       const b = runtime.asteroids[j]
+      const aGrabbed = grabbedAsteroidId === a.id
+      const bGrabbed = grabbedAsteroidId === b.id
 
       const delta = a.position.clone().sub(b.position)
       const distance = Math.max(delta.length(), 0.0001)
@@ -1078,10 +1138,29 @@ function resolveAsteroidCollisions(runtime: GameRuntime) {
 
       const normal = delta.multiplyScalar(1 / distance)
       const overlap = minDistance - distance
+      const relativeSpeed = a.velocity.clone().sub(b.velocity).dot(normal)
+
+      if (aGrabbed || bGrabbed) {
+        if (aGrabbed) {
+          b.position.addScaledVector(normal, -overlap)
+        } else {
+          a.position.addScaledVector(normal, overlap)
+        }
+
+        if (relativeSpeed < 0) {
+          const rigidImpulse = (1 + ASTEROID_COLLISION_RESTITUTION) * relativeSpeed
+          if (aGrabbed) {
+            b.velocity.addScaledVector(normal, rigidImpulse)
+          } else {
+            a.velocity.addScaledVector(normal, -rigidImpulse)
+          }
+        }
+        continue
+      }
+
       a.position.addScaledVector(normal, overlap * 0.5)
       b.position.addScaledVector(normal, -overlap * 0.5)
 
-      const relativeSpeed = a.velocity.clone().sub(b.velocity).dot(normal)
       if (relativeSpeed < 0) {
         const impulse = (-(1 + ASTEROID_COLLISION_RESTITUTION) * relativeSpeed) / 2
         a.velocity.addScaledVector(normal, impulse)
@@ -1097,6 +1176,7 @@ function resolveAsteroidPirateImpacts(runtime: GameRuntime, dt: number) {
   runtime.pirateAsteroidGrace = Math.max(0, runtime.pirateAsteroidGrace - dt)
 
   for (const asteroid of runtime.asteroids) {
+    const asteroidGrabbed = runtime.grabbedAsteroidId === asteroid.id
     const delta = asteroid.position.clone().sub(runtime.piratePosition)
     const distance = Math.max(delta.length(), 0.0001)
     const minDistance = asteroid.radius + PIRATE_RADIUS
@@ -1105,8 +1185,12 @@ function resolveAsteroidPirateImpacts(runtime: GameRuntime, dt: number) {
 
     const normal = delta.multiplyScalar(1 / distance)
     const overlap = minDistance - distance
-    asteroid.position.addScaledVector(normal, overlap * 0.72)
-    runtime.piratePosition.addScaledVector(normal, -overlap * 0.28)
+    if (asteroidGrabbed) {
+      runtime.piratePosition.addScaledVector(normal, -overlap)
+    } else {
+      asteroid.position.addScaledVector(normal, overlap * 0.72)
+      runtime.piratePosition.addScaledVector(normal, -overlap * 0.28)
+    }
 
     const relative = asteroid.velocity.clone().sub(runtime.pirateVelocity)
     const impact = Math.max(0, -relative.dot(normal))
@@ -1135,7 +1219,9 @@ function resolveAsteroidPirateImpacts(runtime: GameRuntime, dt: number) {
       runtime.pirateAsteroidGrace = ASTEROID_PIRATE_IMPACT_GRACE
     }
 
-    asteroid.velocity.addScaledVector(normal, impact * 0.45)
+    if (!asteroidGrabbed) {
+      asteroid.velocity.addScaledVector(normal, impact * 0.45)
+    }
     if (runtime.pirateState === 'incoming') {
       runtime.pirateVelocity.addScaledVector(normal, -impact * 0.9)
     } else {
@@ -1148,6 +1234,8 @@ function resolvePlayerAsteroidImpacts(runtime: GameRuntime, dt: number) {
   runtime.collisionGrace = Math.max(0, runtime.collisionGrace - dt)
 
   for (const asteroid of runtime.asteroids) {
+    if (runtime.grabbedAsteroidId === asteroid.id) continue
+
     const delta = runtime.playerPosition.clone().sub(asteroid.position)
     const distance = Math.max(delta.length(), 0.0001)
     const minDistance = PLAYER_RADIUS + asteroid.radius
@@ -1296,6 +1384,12 @@ export function stepRuntime(runtime: GameRuntime, dtRaw: number, controlInput: C
   runtime.drillActive = false
   updateFreighterTransit(runtime)
 
+  if (canDisembarkEarly(runtime) && justPressed(runtime, keys, 'Enter')) {
+    triggerEarlyDisembark(runtime)
+    updatePrevKeys(runtime, keys)
+    return
+  }
+
   applyFreighterDockActions(runtime, keys)
 
   if (runtime.docked) {
@@ -1303,13 +1397,13 @@ export function stepRuntime(runtime: GameRuntime, dtRaw: number, controlInput: C
   } else {
     updatePlayerControlWithInput(runtime, dt, controlInput)
     updateGrabber(runtime, keys)
-    moveGrabbedAsteroid(runtime, dt)
+    moveGrabbedAsteroid(runtime)
     launchCargoShot(runtime, keys)
     launchWeaponShot(runtime, keys)
   }
 
   for (const asteroid of runtime.asteroids) {
-    updateAsteroidBody(asteroid, dt)
+    updateAsteroidBody(runtime, asteroid, dt)
   }
 
   resolveAsteroidCollisions(runtime)
