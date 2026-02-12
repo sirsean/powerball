@@ -76,6 +76,7 @@ const PIRATE_DANGER_LEVELS: Array<{ level: number; label: string; maxChance: num
   { level: 4, label: 'High', maxChance: 0.75 },
   { level: 5, label: 'Critical', maxChance: 1 },
 ]
+const HULL_BREACH_OUTCOME_REASON = 'Your mining craft vented atmosphere and went dark.'
 
 function getTimeDrivenPirateDangerProfile(nowMs: number): PirateDangerProfile {
   const now = new Date(nowMs)
@@ -1123,7 +1124,8 @@ function HangarView({
           <div>
             <label>Launch Profile</label>
             <strong>
-              GR {runMods.grabberRange.toFixed(1)}m | H {runMods.maxHull.toFixed(0)} | C {runMods.cargoCapacity}
+              GR {runMods.grabberRange.toFixed(1)}m | H {runMods.maxHull.toFixed(0)} | C {runMods.cargoCapacity} | RM{' '}
+              {runMods.rammerDamageMultiplier.toFixed(2)}x / {Math.round(runMods.rammerSelfDamageMultiplier * 100)}%
             </strong>
           </div>
           <div>
@@ -1239,6 +1241,7 @@ function App() {
   const [activeRunDanger, setActiveRunDanger] = useState<PirateDangerProfile | null>(null)
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [loadingReady, setLoadingReady] = useState(false)
+  const [showHullBreachModal, setShowHullBreachModal] = useState(false)
   const audioRef = useRef<GameAudioEngine | null>(null)
   const pirateDanger = useMemo(() => getTimeDrivenPirateDangerProfile(hangarClockMs), [hangarClockMs])
 
@@ -1287,8 +1290,8 @@ function App() {
 
       if (screen === 'flight' && nextHud.status !== 'active') {
         if (nextHud.status === 'won') {
-          const creditsDelta = runtime.deliveredValue
-          const powerballsDelta = runtime.deliveredPowerballScore
+          const creditsDelta = nextHud.deliveredValue
+          const powerballsDelta = nextHud.deliveredPowerballScore
           setCareer((prev) => ({
             ...prev,
             credits: prev.credits + creditsDelta,
@@ -1315,9 +1318,19 @@ function App() {
           })
         }
 
+        const isHullBreachLoss =
+          nextHud.status === 'lost' && nextHud.outcomeReason === HULL_BREACH_OUTCOME_REASON
+        if (isHullBreachLoss) {
+          setHud(nextHud)
+          setShowHullBreachModal(true)
+          window.clearInterval(timer)
+          return
+        }
+
         setRuntime(null)
         setHud(null)
         setActiveRunDanger(null)
+        setShowHullBreachModal(false)
         setHangarClockMs(Date.now())
         setScreen('hangar')
         window.clearInterval(timer)
@@ -1340,6 +1353,7 @@ function App() {
     setRuntime(nextRuntime)
     setHud(createHudSnapshot(nextRuntime))
     setDebrief(null)
+    setShowHullBreachModal(false)
     setScreen('flight')
   }
 
@@ -1367,6 +1381,15 @@ function App() {
 
   const enterHangarFromLoading = () => {
     if (!loadingReady) return
+    setHangarClockMs(Date.now())
+    setScreen('hangar')
+  }
+
+  const returnToHangarFromHullBreach = () => {
+    setRuntime(null)
+    setHud(null)
+    setActiveRunDanger(null)
+    setShowHullBreachModal(false)
     setHangarClockMs(Date.now())
     setScreen('hangar')
   }
@@ -1411,6 +1434,16 @@ function App() {
 
       <div className="crt-overlay" />
       <HudPanel hud={hud} pirateDanger={activeRunDanger} />
+      {showHullBreachModal && (
+        <div className="outcome-overlay">
+          <section className="outcome-card">
+            <h2>Hull Breach // Atmosphere Lost</h2>
+            <p>Your craft took critical damage and lost atmo. You are now adrift.</p>
+            <p className="subtle">Return to hangar for debrief and replacement loadout.</p>
+            <button onClick={returnToHangarFromHullBreach}>Return To Hangar</button>
+          </section>
+        </div>
+      )}
     </main>
   )
 }

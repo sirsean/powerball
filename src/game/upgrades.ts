@@ -1,6 +1,6 @@
 import type { RunModifiers } from './runtime'
 
-export type UpgradeKey = 'grabber' | 'thruster' | 'drill' | 'hull' | 'cargo' | 'weapons'
+export type UpgradeKey = 'grabber' | 'thruster' | 'drill' | 'hull' | 'cargo' | 'rammer' | 'weapons'
 
 export interface UpgradeDefinition {
   key: UpgradeKey
@@ -14,7 +14,7 @@ export interface UpgradeDefinition {
 
 export type UpgradeLevels = Record<UpgradeKey, number>
 
-export const UPGRADE_ORDER: UpgradeKey[] = ['grabber', 'thruster', 'drill', 'hull', 'cargo', 'weapons']
+export const UPGRADE_ORDER: UpgradeKey[] = ['grabber', 'thruster', 'drill', 'hull', 'cargo', 'rammer', 'weapons']
 
 export const UPGRADE_DEFINITIONS: Record<UpgradeKey, UpgradeDefinition> = {
   grabber: {
@@ -62,6 +62,15 @@ export const UPGRADE_DEFINITIONS: Record<UpgradeKey, UpgradeDefinition> = {
     costScale: 1.88,
     powerballGateByLevel: [0, 0, 1, 4, 8, 12],
   },
+  rammer: {
+    key: 'rammer',
+    label: 'Ramming Prow',
+    description: 'Reinforces the prow to hit pirates harder while reducing your own collision damage.',
+    maxLevel: 5,
+    baseCost: 4400,
+    costScale: 2,
+    powerballGateByLevel: [0, 0, 3, 6, 10, 14],
+  },
   weapons: {
     key: 'weapons',
     label: 'Raider Countermeasures',
@@ -80,6 +89,7 @@ export function createBaseUpgradeLevels(): UpgradeLevels {
     drill: 0,
     hull: 0,
     cargo: 0,
+    rammer: 0,
     weapons: 0,
   }
 }
@@ -105,6 +115,11 @@ export function getUpgradeStatSummary(key: UpgradeKey, level: number) {
       return `${Math.round(100 + safeLevel * 18)} max hull`
     case 'cargo':
       return `${Math.round(130 + safeLevel * 26)} hold capacity`
+    case 'rammer': {
+      const pirateDamage = 1 + safeLevel * 0.24
+      const selfDamagePercent = Math.round(Math.max(35, 100 - safeLevel * 14))
+      return `${pirateDamage.toFixed(2)}x ram dmg / ${selfDamagePercent}% self dmg`
+    }
     case 'weapons':
       if (safeLevel <= 0) return 'offline'
       return `${Math.round(6 + safeLevel * 6)} ammo / ${Math.round(14 + safeLevel * 10)} damage`
@@ -113,6 +128,7 @@ export function getUpgradeStatSummary(key: UpgradeKey, level: number) {
 
 export function buildRunModifiers(levels: UpgradeLevels): RunModifiers {
   const weaponLevel = levels.weapons
+  const rammerLevel = levels.rammer
 
   return {
     grabberRange: 7.5 + levels.grabber * 1.3,
@@ -122,6 +138,8 @@ export function buildRunModifiers(levels: UpgradeLevels): RunModifiers {
     cargoCapacity: 130 + levels.cargo * 26,
     weaponAmmo: weaponLevel > 0 ? 6 + weaponLevel * 6 : 0,
     weaponDamage: weaponLevel > 0 ? 14 + weaponLevel * 10 : 0,
+    rammerDamageMultiplier: 1 + rammerLevel * 0.24,
+    rammerSelfDamageMultiplier: Math.max(0.35, 1 - rammerLevel * 0.14),
     pirateEncounterChance: 1,
   }
 }

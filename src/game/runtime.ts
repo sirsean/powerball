@@ -97,6 +97,8 @@ export interface GameRuntime {
   weaponAmmo: number
   weaponMaxAmmo: number
   weaponDamage: number
+  rammerDamageMultiplier: number
+  rammerSelfDamageMultiplier: number
   asteroids: AsteroidSim[]
   cargoShots: CargoShot[]
   cargoShotSerial: number
@@ -109,6 +111,7 @@ export interface GameRuntime {
   pirateHull: number
   pirateMaxHull: number
   pirateRamGrace: number
+  pirateAsteroidGrace: number
   status: GameStatus
   outcomeReason: string
   events: EventEntry[]
@@ -172,6 +175,8 @@ export interface RunModifiers {
   cargoCapacity: number
   weaponAmmo: number
   weaponDamage: number
+  rammerDamageMultiplier: number
+  rammerSelfDamageMultiplier: number
   pirateEncounterChance: number
 }
 
@@ -197,10 +202,19 @@ const FLIGHT_BOUNDS = {
   maxZ: 176,
 }
 
+const ASTEROID_TRAVEL_BOUNDS = {
+  minX: FLIGHT_BOUNDS.minX - 220,
+  maxX: FLIGHT_BOUNDS.maxX + 220,
+  minY: FLIGHT_BOUNDS.minY - 70,
+  maxY: FLIGHT_BOUNDS.maxY + 70,
+  minZ: FLIGHT_BOUNDS.minZ - 220,
+  maxZ: FLIGHT_BOUNDS.maxZ + 220,
+}
+
 const ASTEROID_COUNT = 44
 const PLAYER_RADIUS = 2.05
-const ASTEROID_DRAG = 0.996
-const ASTEROID_BOUNCE = 0.92
+const ASTEROID_DRAG = 0.9992
+const ASTEROID_COLLISION_RESTITUTION = 0.82
 const TOTAL_MISSION_SECONDS = 320
 const DOCK_RADIUS = 16
 const DOCK_APPROACH_RADIUS = 30
@@ -211,8 +225,16 @@ const CARGO_SHOT_RADIUS = 0.72
 const CARGO_SHOT_LIFETIME = 5
 const CARGO_SHOT_SPEED = 34
 const RAM_DELAY_MIN_IMPACT = 2.3
+const ASTEROID_PIRATE_IMPACT_MIN_SPEED = 1.6
+const ASTEROID_PIRATE_IMPACT_GRACE = 0.58
 const DOCK_REPAIR_PER_SECOND = 14
 const DOCK_UNLOAD_UNITS_PER_SECOND = 3.2
+const GRABBER_ANCHOR_PULL = 4.4
+const GRABBED_ASTEROID_DAMPING_RATE = 0.42
+const ASTEROID_FLING_BASE_SPEED = 8.2
+const ASTEROID_FLING_FORWARD_SCALE = 1.05
+const ASTEROID_FLING_THROTTLE_BONUS = 7
+const ASTEROID_FLING_PLAYER_VELOCITY_SHARE = 0.72
 const BASE_GRABBER_RANGE = 7.5
 const BASE_THRUSTER_MULTIPLIER = 1
 const BASE_DRILL_MULTIPLIER = 1
@@ -220,6 +242,8 @@ const BASE_MAX_HULL = 100
 const BASE_CARGO_CAPACITY = 130
 const BASE_WEAPON_AMMO = 0
 const BASE_WEAPON_DAMAGE = 0
+const BASE_RAMMER_DAMAGE_MULTIPLIER = 1
+const BASE_RAMMER_SELF_DAMAGE_MULTIPLIER = 1
 const BASE_PIRATE_ENCOUNTER_CHANCE = 1
 
 const FREIGHTER_EDGE_X = ASTEROID_FIELD_BOUNDS.minX - 24
@@ -400,6 +424,8 @@ const DEFAULT_RUN_MODIFIERS: RunModifiers = {
   cargoCapacity: BASE_CARGO_CAPACITY,
   weaponAmmo: BASE_WEAPON_AMMO,
   weaponDamage: BASE_WEAPON_DAMAGE,
+  rammerDamageMultiplier: BASE_RAMMER_DAMAGE_MULTIPLIER,
+  rammerSelfDamageMultiplier: BASE_RAMMER_SELF_DAMAGE_MULTIPLIER,
   pirateEncounterChance: BASE_PIRATE_ENCOUNTER_CHANCE,
 }
 
@@ -449,6 +475,8 @@ export function createRuntime(seed = Date.now(), modifiers: Partial<RunModifiers
     weaponAmmo: runMods.weaponAmmo,
     weaponMaxAmmo: runMods.weaponAmmo,
     weaponDamage: runMods.weaponDamage,
+    rammerDamageMultiplier: Math.max(1, runMods.rammerDamageMultiplier),
+    rammerSelfDamageMultiplier: MathUtils.clamp(runMods.rammerSelfDamageMultiplier, 0.2, 1),
     asteroids,
     cargoShots: [],
     cargoShotSerial: 0,
@@ -461,6 +489,7 @@ export function createRuntime(seed = Date.now(), modifiers: Partial<RunModifiers
     pirateHull: PIRATE_HULL_MAX,
     pirateMaxHull: PIRATE_HULL_MAX,
     pirateRamGrace: 0,
+    pirateAsteroidGrace: 0,
     status: 'active',
     outcomeReason: '',
     events: [],
@@ -576,6 +605,7 @@ function triggerPirateEvent(runtime: GameRuntime) {
   runtime.pirateBoardTimer = randomRange(runtime.rng, 40, 68)
   runtime.pirateHull = runtime.pirateMaxHull
   runtime.pirateRamGrace = 0
+  runtime.pirateAsteroidGrace = 0
   runtime.piratePosition.copy(runtime.freighterPosition).add(new Vector3(22, 9, -18))
   runtime.pirateVelocity.set(0, 0, 0)
 
@@ -617,6 +647,23 @@ function updatePirate(runtime: GameRuntime, dt: number) {
     runtime.outcomeReason = 'Pirates boarded the freighter before it cleared the belt.'
     addEvent(runtime, runtime.outcomeReason, 'alert')
   }
+}
+
+function disablePirate(runtime: GameRuntime) {
+  runtime.pirateState = 'disabled'
+  runtime.pirateVelocity.set(0, 0, 0)
+  runtime.pirateBoardTimer = Infinity
+  addEvent(runtime, 'Pirate drive core disabled. Boarding threat neutralized.', 'good')
+}
+
+function applyPirateDamage(runtime: GameRuntime, damage: number) {
+  if (runtime.pirateState !== 'incoming' || damage <= 0) return false
+
+  runtime.pirateHull = Math.max(0, runtime.pirateHull - damage)
+  if (runtime.pirateHull > 0) return false
+
+  disablePirate(runtime)
+  return true
 }
 
 function smoothAxis(current: number, target: number, rate: number, dt: number) {
@@ -682,36 +729,36 @@ function updateAsteroidBody(asteroid: AsteroidSim, dt: number) {
   asteroid.position.addScaledVector(asteroid.velocity, dt)
   asteroid.velocity.multiplyScalar(Math.pow(ASTEROID_DRAG, dt * 60))
 
-  const minX = ASTEROID_FIELD_BOUNDS.minX + asteroid.radius
-  const maxX = ASTEROID_FIELD_BOUNDS.maxX - asteroid.radius
-  const minY = ASTEROID_FIELD_BOUNDS.minY + asteroid.radius
-  const maxY = ASTEROID_FIELD_BOUNDS.maxY - asteroid.radius
-  const minZ = ASTEROID_FIELD_BOUNDS.minZ + asteroid.radius
-  const maxZ = ASTEROID_FIELD_BOUNDS.maxZ - asteroid.radius
+  const minX = ASTEROID_TRAVEL_BOUNDS.minX + asteroid.radius
+  const maxX = ASTEROID_TRAVEL_BOUNDS.maxX - asteroid.radius
+  const minY = ASTEROID_TRAVEL_BOUNDS.minY + asteroid.radius
+  const maxY = ASTEROID_TRAVEL_BOUNDS.maxY - asteroid.radius
+  const minZ = ASTEROID_TRAVEL_BOUNDS.minZ + asteroid.radius
+  const maxZ = ASTEROID_TRAVEL_BOUNDS.maxZ - asteroid.radius
 
   if (asteroid.position.x < minX) {
     asteroid.position.x = minX
-    asteroid.velocity.x = Math.abs(asteroid.velocity.x) * ASTEROID_BOUNCE
+    if (asteroid.velocity.x < 0) asteroid.velocity.x = 0
   }
   if (asteroid.position.x > maxX) {
     asteroid.position.x = maxX
-    asteroid.velocity.x = -Math.abs(asteroid.velocity.x) * ASTEROID_BOUNCE
+    if (asteroid.velocity.x > 0) asteroid.velocity.x = 0
   }
   if (asteroid.position.y < minY) {
     asteroid.position.y = minY
-    asteroid.velocity.y = Math.abs(asteroid.velocity.y) * ASTEROID_BOUNCE
+    if (asteroid.velocity.y < 0) asteroid.velocity.y = 0
   }
   if (asteroid.position.y > maxY) {
     asteroid.position.y = maxY
-    asteroid.velocity.y = -Math.abs(asteroid.velocity.y) * ASTEROID_BOUNCE
+    if (asteroid.velocity.y > 0) asteroid.velocity.y = 0
   }
   if (asteroid.position.z < minZ) {
     asteroid.position.z = minZ
-    asteroid.velocity.z = Math.abs(asteroid.velocity.z) * ASTEROID_BOUNCE
+    if (asteroid.velocity.z < 0) asteroid.velocity.z = 0
   }
   if (asteroid.position.z > maxZ) {
     asteroid.position.z = maxZ
-    asteroid.velocity.z = -Math.abs(asteroid.velocity.z) * ASTEROID_BOUNCE
+    if (asteroid.velocity.z > 0) asteroid.velocity.z = 0
   }
 }
 
@@ -719,8 +766,25 @@ function updateGrabber(runtime: GameRuntime, keys: Record<string, boolean>) {
   if (!justPressed(runtime, keys, 'KeyG')) return
 
   if (runtime.grabbedAsteroidId !== null) {
+    const asteroid = runtime.asteroids.find((candidate) => candidate.id === runtime.grabbedAsteroidId)
+    if (asteroid) {
+      const forward = getPlayerForward(runtime)
+      const forwardSpeed = Math.max(0, runtime.playerVelocity.dot(forward))
+      const flingSpeed =
+        ASTEROID_FLING_BASE_SPEED +
+        forwardSpeed * ASTEROID_FLING_FORWARD_SCALE +
+        runtime.throttleLevel * ASTEROID_FLING_THROTTLE_BONUS
+      asteroid.velocity.addScaledVector(forward, flingSpeed)
+      asteroid.velocity.addScaledVector(runtime.playerVelocity, ASTEROID_FLING_PLAYER_VELOCITY_SHARE)
+      const maxFlingSpeed = 46 + asteroid.radius * 4.5
+      if (asteroid.velocity.lengthSq() > maxFlingSpeed * maxFlingSpeed) {
+        asteroid.velocity.setLength(maxFlingSpeed)
+      }
+      addEvent(runtime, `Grabber disengaged. Asteroid #${asteroid.id} slung forward.`, 'info')
+    } else {
+      addEvent(runtime, 'Grabber disengaged.', 'info')
+    }
     runtime.grabbedAsteroidId = null
-    addEvent(runtime, 'Grabber disengaged.', 'info')
     return
   }
 
@@ -767,8 +831,8 @@ function moveGrabbedAsteroid(runtime: GameRuntime, dt: number) {
   const forward = getPlayerForward(runtime)
   const anchorPoint = runtime.playerPosition.clone().addScaledVector(forward, asteroid.radius + 4.2)
   const toAnchor = anchorPoint.sub(asteroid.position)
-  asteroid.velocity.addScaledVector(toAnchor, dt * 3.3)
-  asteroid.velocity.multiplyScalar(Math.exp(-dt * 1.8))
+  asteroid.velocity.addScaledVector(toAnchor, dt * GRABBER_ANCHOR_PULL)
+  asteroid.velocity.multiplyScalar(Math.exp(-dt * GRABBED_ASTEROID_DAMPING_RATE))
 }
 
 function sampleAsteroidResource(runtime: GameRuntime, asteroid: AsteroidSim): ResourceId {
@@ -1019,10 +1083,63 @@ function resolveAsteroidCollisions(runtime: GameRuntime) {
 
       const relativeSpeed = a.velocity.clone().sub(b.velocity).dot(normal)
       if (relativeSpeed < 0) {
-        const impulse = (-(1 + 0.72) * relativeSpeed) / 2
+        const impulse = (-(1 + ASTEROID_COLLISION_RESTITUTION) * relativeSpeed) / 2
         a.velocity.addScaledVector(normal, impulse)
         b.velocity.addScaledVector(normal, -impulse)
       }
+    }
+  }
+}
+
+function resolveAsteroidPirateImpacts(runtime: GameRuntime, dt: number) {
+  if (runtime.pirateState !== 'incoming') return
+
+  runtime.pirateAsteroidGrace = Math.max(0, runtime.pirateAsteroidGrace - dt)
+
+  for (const asteroid of runtime.asteroids) {
+    const delta = asteroid.position.clone().sub(runtime.piratePosition)
+    const distance = Math.max(delta.length(), 0.0001)
+    const minDistance = asteroid.radius + PIRATE_RADIUS
+
+    if (distance >= minDistance) continue
+
+    const normal = delta.multiplyScalar(1 / distance)
+    const overlap = minDistance - distance
+    asteroid.position.addScaledVector(normal, overlap * 0.72)
+    runtime.piratePosition.addScaledVector(normal, -overlap * 0.28)
+
+    const relative = asteroid.velocity.clone().sub(runtime.pirateVelocity)
+    const impact = Math.max(0, -relative.dot(normal))
+
+    if (runtime.pirateAsteroidGrace <= 0 && impact > ASTEROID_PIRATE_IMPACT_MIN_SPEED) {
+      const massFactor = 0.7 + asteroid.radius * 0.32
+      const pirateDamage = impact * randomRange(runtime.rng, 14, 21) * massFactor
+      const pirateDisabled = applyPirateDamage(runtime, pirateDamage)
+
+      if (pirateDisabled) {
+        addEvent(
+          runtime,
+          `Asteroid strike shredded pirate hull (-${pirateDamage.toFixed(0)}). Boarding threat ended.`,
+          'good',
+        )
+      } else {
+        const delay = Math.min(18, 4 + impact * 1.85 + asteroid.radius * 0.55)
+        runtime.pirateBoardTimer += delay
+        addEvent(
+          runtime,
+          `Asteroid impact on pirate: -${pirateDamage.toFixed(0)} hull, boarding delayed +${delay.toFixed(1)}s.`,
+          'good',
+        )
+      }
+
+      runtime.pirateAsteroidGrace = ASTEROID_PIRATE_IMPACT_GRACE
+    }
+
+    asteroid.velocity.addScaledVector(normal, impact * 0.45)
+    if (runtime.pirateState === 'incoming') {
+      runtime.pirateVelocity.addScaledVector(normal, -impact * 0.9)
+    } else {
+      break
     }
   }
 }
@@ -1075,14 +1192,27 @@ function resolvePlayerPirateImpact(runtime: GameRuntime, dt: number) {
   const impact = Math.max(0, -relative.dot(normal))
 
   if (runtime.pirateRamGrace <= 0 && impact > RAM_DELAY_MIN_IMPACT) {
+    const playerDamage = impact * randomRange(runtime.rng, 4.6, 7.2) * runtime.rammerSelfDamageMultiplier
+    runtime.hull = Math.max(0, runtime.hull - playerDamage)
+
+    const pirateDamage = impact * randomRange(runtime.rng, 7.8, 11.2) * runtime.rammerDamageMultiplier
+    const pirateDisabled = applyPirateDamage(runtime, pirateDamage)
+
     const delay = Math.min(12, 3 + impact * 1.4)
     runtime.pirateBoardTimer += delay
     runtime.pirateRamGrace = 0.75
-    addEvent(runtime, `Pirate ram hit confirmed. Boarding delayed +${delay.toFixed(1)}s.`, 'good')
+    const delayLabel = pirateDisabled ? 'Boarding threat ended.' : `Boarding delayed +${delay.toFixed(1)}s.`
+    addEvent(
+      runtime,
+      `Ramming impact: pirate -${pirateDamage.toFixed(0)} hull, you -${playerDamage.toFixed(0)} hull. ${delayLabel}`,
+      pirateDisabled ? 'good' : 'alert',
+    )
   }
 
   runtime.playerVelocity.addScaledVector(normal, impact * 0.6)
-  runtime.pirateVelocity.addScaledVector(normal, -impact * 0.5)
+  if (runtime.pirateState === 'incoming') {
+    runtime.pirateVelocity.addScaledVector(normal, -impact * 0.5)
+  }
 }
 
 function updateCargoShots(runtime: GameRuntime, dt: number) {
@@ -1106,7 +1236,7 @@ function updateCargoShots(runtime: GameRuntime, dt: number) {
     if (runtime.pirateState === 'incoming') {
       const distance = shot.position.distanceTo(runtime.piratePosition)
       if (distance <= shot.radius + PIRATE_RADIUS) {
-        runtime.pirateHull = Math.max(0, runtime.pirateHull - shot.damage)
+        const pirateDisabled = applyPirateDamage(runtime, shot.damage)
         runtime.pirateBoardTimer += shot.delayBonus
         if (shot.shotType === 'weapon') {
           addEvent(runtime, `Weapon hit confirmed. Boarding delayed +${shot.delayBonus.toFixed(1)}s.`, 'good')
@@ -1117,13 +1247,7 @@ function updateCargoShots(runtime: GameRuntime, dt: number) {
             'good',
           )
         }
-
-        if (runtime.pirateHull <= 0) {
-          runtime.pirateState = 'disabled'
-          runtime.pirateVelocity.set(0, 0, 0)
-          runtime.pirateBoardTimer = Infinity
-          addEvent(runtime, 'Pirate drive core disabled. Boarding threat neutralized.', 'good')
-        }
+        if (pirateDisabled) runtime.pirateBoardTimer = Infinity
         hitPirate = true
       }
     }
@@ -1189,6 +1313,7 @@ export function stepRuntime(runtime: GameRuntime, dtRaw: number, controlInput: C
   }
 
   resolveAsteroidCollisions(runtime)
+  resolveAsteroidPirateImpacts(runtime, dt)
   if (!runtime.docked) {
     resolvePlayerAsteroidImpacts(runtime, dt)
     resolvePlayerPirateImpact(runtime, dt)
