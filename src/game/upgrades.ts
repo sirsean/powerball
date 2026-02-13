@@ -13,6 +13,8 @@ export interface UpgradeDefinition {
 }
 
 export type UpgradeLevels = Record<UpgradeKey, number>
+export type UpgradeInventory = Record<UpgradeKey, number[]>
+export type UpgradeLoadout = Record<UpgradeKey, number | null>
 
 export const UPGRADE_ORDER: UpgradeKey[] = ['grabber', 'thruster', 'drill', 'hull', 'cargo', 'rammer', 'weapons']
 
@@ -92,6 +94,74 @@ export function createBaseUpgradeLevels(): UpgradeLevels {
     rammer: 0,
     weapons: 0,
   }
+}
+
+export function createUpgradeInventory(): UpgradeInventory {
+  return {
+    grabber: Array(UPGRADE_DEFINITIONS.grabber.maxLevel + 1).fill(0),
+    thruster: Array(UPGRADE_DEFINITIONS.thruster.maxLevel + 1).fill(0),
+    drill: Array(UPGRADE_DEFINITIONS.drill.maxLevel + 1).fill(0),
+    hull: Array(UPGRADE_DEFINITIONS.hull.maxLevel + 1).fill(0),
+    cargo: Array(UPGRADE_DEFINITIONS.cargo.maxLevel + 1).fill(0),
+    rammer: Array(UPGRADE_DEFINITIONS.rammer.maxLevel + 1).fill(0),
+    weapons: Array(UPGRADE_DEFINITIONS.weapons.maxLevel + 1).fill(0),
+  }
+}
+
+export function createUpgradeLoadout(): UpgradeLoadout {
+  return {
+    grabber: null,
+    thruster: null,
+    drill: null,
+    hull: null,
+    cargo: null,
+    rammer: null,
+    weapons: null,
+  }
+}
+
+export function getUpgradeInventoryCount(inventory: UpgradeInventory, key: UpgradeKey, level: number) {
+  if (level <= 0) return 0
+  return Math.max(0, Math.floor(inventory[key][level] ?? 0))
+}
+
+export function addUpgradeInventoryItem(
+  inventory: UpgradeInventory,
+  key: UpgradeKey,
+  level: number,
+  amount = 1,
+): UpgradeInventory {
+  if (level <= 0 || amount <= 0) return inventory
+
+  const next = { ...inventory }
+  const levels = [...next[key]]
+  levels[level] = (levels[level] ?? 0) + amount
+  next[key] = levels
+  return next
+}
+
+export function removeUpgradeInventoryItem(
+  inventory: UpgradeInventory,
+  key: UpgradeKey,
+  level: number,
+  amount = 1,
+): UpgradeInventory {
+  if (level <= 0 || amount <= 0) return inventory
+
+  const next = { ...inventory }
+  const levels = [...next[key]]
+  const current = Math.max(0, Math.floor(levels[level] ?? 0))
+  levels[level] = Math.max(0, current - amount)
+  next[key] = levels
+  return next
+}
+
+export function loadoutToUpgradeLevels(loadout: UpgradeLoadout): UpgradeLevels {
+  const levels = createBaseUpgradeLevels()
+  for (const key of UPGRADE_ORDER) {
+    levels[key] = Math.max(0, loadout[key] ?? 0)
+  }
+  return levels
 }
 
 export function getUpgradeCost(definition: UpgradeDefinition, nextLevel: number) {

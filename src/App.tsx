@@ -21,15 +21,21 @@ import {
 import { useKeyboard } from './game/useKeyboard'
 import { GameAudioEngine } from './audio/gameAudio'
 import {
+  addUpgradeInventoryItem,
   UPGRADE_DEFINITIONS,
   UPGRADE_ORDER,
   buildRunModifiers,
-  createBaseUpgradeLevels,
+  createUpgradeInventory,
+  createUpgradeLoadout,
+  getUpgradeInventoryCount,
   getUpgradeCost,
   getUpgradePowerballRequirement,
   getUpgradeStatSummary,
+  loadoutToUpgradeLevels,
+  removeUpgradeInventoryItem,
   type UpgradeKey,
-  type UpgradeLevels,
+  type UpgradeInventory,
+  type UpgradeLoadout,
 } from './game/upgrades'
 
 const ASTEROID_GLB_PATHS: string[] = [
@@ -70,7 +76,8 @@ const HANGAR_INTERIOR_TEXTURE_PATHS = {
 interface CareerState {
   credits: number
   deliveredPowerballs: number
-  upgrades: UpgradeLevels
+  inventory: UpgradeInventory
+  loadout: UpgradeLoadout
   runsCompleted: number
 }
 
@@ -1427,14 +1434,19 @@ function HangarView({
   pirateDanger,
   onLaunch,
   onBuyUpgrade,
+  onEquipUpgrade,
+  onUnequipUpgrade,
 }: {
   career: CareerState
   debrief: DebriefReport | null
   pirateDanger: PirateDangerProfile
   onLaunch: () => void
-  onBuyUpgrade: (key: UpgradeKey) => void
+  onBuyUpgrade: (key: UpgradeKey, level: number) => void
+  onEquipUpgrade: (key: UpgradeKey, level: number) => void
+  onUnequipUpgrade: (key: UpgradeKey) => void
 }) {
-  const runMods = buildRunModifiers(career.upgrades)
+  const equippedLevels = loadoutToUpgradeLevels(career.loadout)
+  const runMods = buildRunModifiers(equippedLevels)
 
   return (
     <div className="hangar-view">
@@ -1484,7 +1496,7 @@ function HangarView({
               </p>
             )}
             {debrief.status === 'lost' && (
-              <p className="subtle">All ship upgrades reset to level 0 after mission failure.</p>
+              <p className="subtle">Equipped loadout hardware was lost. Unequipped inventory remains in storage.</p>
             )}
           </section>
         )}
@@ -1497,24 +1509,21 @@ function HangarView({
           </button>
         </section>
 
+        <section className="hud-card hangar-inventory-notes">
+          <div className="dock-progress-row">
+            <label>Loadout Outcome Risk</label>
+            <strong>Only equipped modules are lost on failed runs</strong>
+          </div>
+          <div className="dock-progress-row">
+            <label>Inventory Notes</label>
+            <strong>Stored modules survive mission failure</strong>
+          </div>
+        </section>
+
         <section className="hangar-upgrades">
           {UPGRADE_ORDER.map((key) => {
             const def = UPGRADE_DEFINITIONS[key]
-            const currentLevel = career.upgrades[key]
-            const nextLevel = currentLevel + 1
-            const atMax = currentLevel >= def.maxLevel
-            const nextCost = getUpgradeCost(def, nextLevel)
-            const requiredPowerballs = getUpgradePowerballRequirement(def, nextLevel)
-            const lockedByPowerballs = career.deliveredPowerballs < requiredPowerballs
-            const lockedByCredits = career.credits < nextCost
-            const canBuy = !atMax && !lockedByPowerballs && !lockedByCredits
-            const currentSummary = getUpgradeStatSummary(def.key, currentLevel)
-            const nextSummary = atMax ? 'max level reached' : getUpgradeStatSummary(def.key, nextLevel)
-
-            let buyLabel = `Buy Level ${nextLevel}`
-            if (atMax) buyLabel = 'Max Level'
-            else if (lockedByPowerballs) buyLabel = 'Locked: Prestige Required'
-            else if (lockedByCredits) buyLabel = 'Insufficient Credits'
+            const equippedLevel = career.loadout[key]
 
             return (
               <article className="hud-card hangar-upgrade-card" key={def.key}>
@@ -1522,39 +1531,70 @@ function HangarView({
                   <div className="hangar-upgrade-copy">
                     <h2>{def.label}</h2>
                     <p>{def.description}</p>
-                    <button className="hangar-upgrade-btn" onClick={() => onBuyUpgrade(def.key)} disabled={!canBuy}>
-                      {buyLabel}
-                    </button>
+                    <div className="dock-progress-row">
+                      <label>Equipped</label>
+                      <strong>{equippedLevel ? `Level ${equippedLevel}` : 'Unequipped'}</strong>
+                    </div>
+                    {equippedLevel && (
+                      <button className="hangar-upgrade-btn" onClick={() => onUnequipUpgrade(def.key)}>
+                        Unequip
+                      </button>
+                    )}
                   </div>
                   <div className="hangar-upgrade-stats">
-                    <div className="dock-progress-row">
-                      <label>Level</label>
-                      <strong>
-                        {currentLevel} / {def.maxLevel}
-                      </strong>
+                    <div className="hangar-upgrade-level-list">
+                      {Array.from({ length: def.maxLevel }, (_, index) => {
+                        const level = index + 1
+                        const ownedCount = getUpgradeInventoryCount(career.inventory, key, level)
+                        const isEquipped = equippedLevel === level
+                        const cost = getUpgradeCost(def, level)
+                        const requiredPowerballs = getUpgradePowerballRequirement(def, level)
+                        const lockedByPowerballs = career.deliveredPowerballs < requiredPowerballs
+                        const lockedByCredits = career.credits < cost
+                        const canBuy = !lockedByPowerballs && !lockedByCredits
+                        const canEquip = ownedCount > 0
+
+                        let buyLabel = `Buy L${level}`
+                        if (lockedByPowerballs) buyLabel = 'Locked'
+                        else if (lockedByCredits) buyLabel = 'Need Credits'
+
+                        let equipLabel = 'Equip'
+                        if (isEquipped) equipLabel = 'Equipped'
+                        else if (!canEquip) equipLabel = 'No Stock'
+
+                        return (
+                          <div className="hangar-upgrade-level-row" key={`${def.key}-level-${level}`}>
+                            <div className="hangar-upgrade-level-meta">
+                              <strong className="hangar-upgrade-level-title">Level {level}</strong>
+                              <span>{getUpgradeStatSummary(def.key, level)}</span>
+                            </div>
+                            <div className="hangar-upgrade-level-economy">
+                              <span>{ownedCount}x owned</span>
+                              <span>{cost.toLocaleString()} cr</span>
+                              <span>
+                                PB {career.deliveredPowerballs} / {requiredPowerballs}
+                              </span>
+                            </div>
+                            <div className="hangar-upgrade-level-actions">
+                              <button
+                                className="hangar-upgrade-btn"
+                                onClick={() => onBuyUpgrade(def.key, level)}
+                                disabled={!canBuy}
+                              >
+                                {buyLabel}
+                              </button>
+                              <button
+                                className="hangar-upgrade-btn"
+                                onClick={() => onEquipUpgrade(def.key, level)}
+                                disabled={!canEquip || isEquipped}
+                              >
+                                {equipLabel}
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
-                    <div className="dock-progress-row">
-                      <label>Current Effect</label>
-                      <strong>{currentSummary}</strong>
-                    </div>
-                    <div className="dock-progress-row">
-                      <label>Next Level Effect</label>
-                      <strong>{nextSummary}</strong>
-                    </div>
-                    {!atMax && (
-                      <div className="dock-progress-row">
-                        <label>Next Cost</label>
-                        <strong>{nextCost.toLocaleString()} cr</strong>
-                      </div>
-                    )}
-                    {!atMax && (
-                      <div className="dock-progress-row">
-                        <label>Prestige Gate</label>
-                        <strong>
-                          {career.deliveredPowerballs} / {requiredPowerballs} powerballs
-                        </strong>
-                      </div>
-                    )}
                   </div>
                 </div>
               </article>
@@ -1571,7 +1611,8 @@ function App() {
   const [career, setCareer] = useState<CareerState>({
     credits: 0,
     deliveredPowerballs: 0,
-    upgrades: createBaseUpgradeLevels(),
+    inventory: createUpgradeInventory(),
+    loadout: createUpgradeLoadout(),
     runsCompleted: 0,
   })
   const [debrief, setDebrief] = useState<DebriefReport | null>(null)
@@ -1656,7 +1697,12 @@ function App() {
         } else {
           setCareer((prev) => ({
             ...prev,
-            upgrades: createBaseUpgradeLevels(),
+            inventory: UPGRADE_ORDER.reduce((nextInventory, key) => {
+              const equippedLevel = prev.loadout[key]
+              if (!equippedLevel || equippedLevel <= 0) return nextInventory
+              return removeUpgradeInventoryItem(nextInventory, key, equippedLevel, 1)
+            }, prev.inventory),
+            loadout: createUpgradeLoadout(),
             runsCompleted: prev.runsCompleted + 1,
           }))
           setDebrief({
@@ -1694,8 +1740,9 @@ function App() {
 
   const launchRun = () => {
     const launchDanger = pirateDanger
+    const loadoutLevels = loadoutToUpgradeLevels(career.loadout)
     const nextRuntime = createRuntime(Date.now(), {
-      ...buildRunModifiers(career.upgrades),
+      ...buildRunModifiers(loadoutLevels),
       pirateEncounterChance: launchDanger.encounterChance,
     })
     setActiveRunDanger(launchDanger)
@@ -1706,26 +1753,44 @@ function App() {
     setScreen('flight')
   }
 
-  const buyUpgrade = (key: UpgradeKey) => {
+  const buyUpgrade = (key: UpgradeKey, level: number) => {
     const definition = UPGRADE_DEFINITIONS[key]
     setCareer((prev) => {
-      const currentLevel = prev.upgrades[key]
-      const nextLevel = currentLevel + 1
-      if (nextLevel > definition.maxLevel) return prev
+      if (level <= 0 || level > definition.maxLevel) return prev
 
-      const cost = getUpgradeCost(definition, nextLevel)
-      const requiredPowerballs = getUpgradePowerballRequirement(definition, nextLevel)
+      const cost = getUpgradeCost(definition, level)
+      const requiredPowerballs = getUpgradePowerballRequirement(definition, level)
       if (prev.credits < cost || prev.deliveredPowerballs < requiredPowerballs) return prev
 
       return {
         ...prev,
         credits: prev.credits - cost,
-        upgrades: {
-          ...prev.upgrades,
-          [key]: nextLevel,
+        inventory: addUpgradeInventoryItem(prev.inventory, key, level, 1),
+      }
+    })
+  }
+
+  const equipUpgrade = (key: UpgradeKey, level: number) => {
+    setCareer((prev) => {
+      if (getUpgradeInventoryCount(prev.inventory, key, level) <= 0) return prev
+      return {
+        ...prev,
+        loadout: {
+          ...prev.loadout,
+          [key]: level,
         },
       }
     })
+  }
+
+  const unequipUpgrade = (key: UpgradeKey) => {
+    setCareer((prev) => ({
+      ...prev,
+      loadout: {
+        ...prev.loadout,
+        [key]: null,
+      },
+    }))
   }
 
   const enterHangarFromLoading = () => {
@@ -1788,6 +1853,8 @@ function App() {
           pirateDanger={pirateDanger}
           onLaunch={launchRun}
           onBuyUpgrade={buyUpgrade}
+          onEquipUpgrade={equipUpgrade}
+          onUnequipUpgrade={unequipUpgrade}
         />
       </main>
     )

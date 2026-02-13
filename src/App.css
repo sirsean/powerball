@@ -130,6 +130,56 @@ canvas {
   align-content: start;
 }
 
+.hangar-upgrade-level-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.hangar-upgrade-level-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.95fr) auto;
+  gap: 0.6rem;
+  align-items: center;
+  border: 1px solid rgb(122 95 68 / 34%);
+  background: linear-gradient(180deg, rgb(30 39 46 / 36%) 0%, rgb(18 24 30 / 34%) 100%);
+  border-radius: 0.28rem;
+  padding: 0.45rem 0.55rem;
+}
+
+.hangar-upgrade-level-meta {
+  display: grid;
+  gap: 0.08rem;
+}
+
+.hangar-upgrade-level-title {
+  font-size: 0.8rem;
+  color: #e6c59d;
+}
+
+.hangar-upgrade-level-meta span {
+  font-size: 0.75rem;
+  color: #b7a894;
+}
+
+.hangar-upgrade-level-economy {
+  display: grid;
+  gap: 0.08rem;
+  font-size: 0.72rem;
+  color: #b9ada0;
+}
+
+.hangar-upgrade-level-actions {
+  display: grid;
+  gap: 0.32rem;
+  justify-items: stretch;
+}
+
+.hangar-upgrade-level-actions .hangar-upgrade-btn {
+  margin-top: 0;
+  width: 7.6rem;
+  padding: 0.44rem 0.62rem;
+}
+
 .hangar-upgrade-stats .dock-progress-row {
   margin-top: 0.3rem;
 }
@@ -728,6 +778,20 @@ canvas {
   .hangar-upgrade-layout {
     grid-template-columns: 1fr;
     gap: 0.6rem;
+  }
+
+  .hangar-upgrade-level-row {
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
+    align-items: start;
+  }
+
+  .hangar-upgrade-level-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .hangar-upgrade-level-actions .hangar-upgrade-btn {
+    width: 100%;
   }
 
   .hangar-upgrade-copy p {
