@@ -26,6 +26,7 @@ function createEmptyResourceCounts(): ResourceCounts {
 }
 
 type WebkitWindow = Window & { webkitAudioContext?: typeof AudioContext }
+type UIScreen = 'loading' | 'hangar' | 'flight'
 
 export class GameAudioEngine {
   private context: AudioContext | null = null
@@ -38,6 +39,7 @@ export class GameAudioEngine {
   private drillBedGain: GainNode | null = null
   private engineToneGain: GainNode | null = null
   private klaxonGain: GainNode | null = null
+  private hangarBedGain: GainNode | null = null
 
   private engineToneOsc: OscillatorNode | null = null
   private engineSubOsc: OscillatorNode | null = null
@@ -58,6 +60,9 @@ export class GameAudioEngine {
   private nextUnloadPulseAt = 0
   private nextDrillPulseAt = 0
   private nextHullStressPulseAt = 0
+  private nextHangarCreakAt = 0
+  private nextHangarBangAt = 0
+  private screenState: UIScreen = 'loading'
 
   constructor() {
     this.initContext()
@@ -86,6 +91,37 @@ export class GameAudioEngine {
     this.emitScheduledEffects(hud, now)
 
     this.previous = this.makeSnapshot(runtime, hud)
+  }
+
+  updateInterfaceAudio(screen: UIScreen) {
+    if (this.disposed) return
+
+    const context = this.context
+    const now = context?.currentTime ?? 0
+
+    if (screen !== this.screenState) {
+      this.screenState = screen
+      if (screen === 'hangar') {
+        this.nextHangarCreakAt = now + 0.8 + Math.random() * 1.4
+        this.nextHangarBangAt = now + 2.2 + Math.random() * 2.6
+      }
+    }
+
+    const hangarBedTarget = screen === 'hangar' ? 0.13 : screen === 'loading' ? 0.04 : 0
+    this.setGain(this.hangarBedGain, hangarBedTarget, now, 0.22)
+
+    if (screen !== 'hangar') return
+    if (!context || context.state !== 'running') return
+
+    if (now >= this.nextHangarCreakAt) {
+      this.playHangarCreak(now, 0.35 + Math.random() * 0.65)
+      this.nextHangarCreakAt = now + 1.6 + Math.random() * 3.2
+    }
+
+    if (now >= this.nextHangarBangAt) {
+      this.playHangarBang(now, 0.4 + Math.random() * 0.6)
+      this.nextHangarBangAt = now + 4.2 + Math.random() * 7.3
+    }
   }
 
   dispose() {
@@ -176,6 +212,51 @@ export class GameAudioEngine {
     dockHum.connect(dockHumGain)
     dockHumGain.connect(dockGain)
     dockGain.connect(master)
+
+    const hangarGain = context.createGain()
+    hangarGain.gain.value = 0
+    this.trackNode(hangarGain)
+    this.hangarBedGain = hangarGain
+
+    const hangarNoise = this.createLoopedNoiseSource(context)
+    const hangarLow = context.createBiquadFilter()
+    hangarLow.type = 'lowpass'
+    hangarLow.frequency.value = 190
+    this.trackNode(hangarLow)
+    const hangarHigh = context.createBiquadFilter()
+    hangarHigh.type = 'highpass'
+    hangarHigh.frequency.value = 28
+    this.trackNode(hangarHigh)
+    const hangarNoiseGain = context.createGain()
+    hangarNoiseGain.gain.value = 0.24
+    this.trackNode(hangarNoiseGain)
+    hangarNoise.connect(hangarLow)
+    hangarLow.connect(hangarHigh)
+    hangarHigh.connect(hangarNoiseGain)
+    hangarNoiseGain.connect(hangarGain)
+    this.startSource(hangarNoise)
+
+    const hangarDrone = context.createOscillator()
+    hangarDrone.type = 'triangle'
+    hangarDrone.frequency.value = 35
+    this.startSource(hangarDrone)
+    const hangarDroneGain = context.createGain()
+    hangarDroneGain.gain.value = 0.18
+    this.trackNode(hangarDroneGain)
+    hangarDrone.connect(hangarDroneGain)
+    hangarDroneGain.connect(hangarGain)
+
+    const hangarSub = context.createOscillator()
+    hangarSub.type = 'sine'
+    hangarSub.frequency.value = 22
+    this.startSource(hangarSub)
+    const hangarSubGain = context.createGain()
+    hangarSubGain.gain.value = 0.14
+    this.trackNode(hangarSubGain)
+    hangarSub.connect(hangarSubGain)
+    hangarSubGain.connect(hangarGain)
+
+    hangarGain.connect(master)
 
     const grabberGain = context.createGain()
     grabberGain.gain.value = 0
@@ -616,6 +697,63 @@ export class GameAudioEngine {
       duration: 0.09 + severity * 0.05,
       volume: 0.022 + severity * 0.025,
       type: 'triangle',
+    })
+  }
+
+  private playHangarCreak(when: number, intensity: number) {
+    const bend = (Math.random() - 0.5) * 46
+    this.playNoiseBurst({
+      when,
+      duration: 0.08 + intensity * 0.18,
+      volume: 0.016 + intensity * 0.03,
+      highpass: 130,
+      lowpass: 1600,
+    })
+    this.playTone({
+      when,
+      frequency: 148 + bend - intensity * 34,
+      duration: 0.1 + intensity * 0.09,
+      volume: 0.014 + intensity * 0.02,
+      type: 'sawtooth',
+    })
+    this.playTone({
+      when: when + 0.045,
+      frequency: 108 + bend * 0.55 - intensity * 24,
+      duration: 0.11 + intensity * 0.07,
+      volume: 0.012 + intensity * 0.015,
+      type: 'triangle',
+    })
+  }
+
+  private playHangarBang(when: number, intensity: number) {
+    const base = 112 + (Math.random() - 0.5) * 18
+    this.playNoiseBurst({
+      when,
+      duration: 0.06 + intensity * 0.12,
+      volume: 0.04 + intensity * 0.07,
+      highpass: 220,
+      lowpass: 3200,
+    })
+    this.playTone({
+      when,
+      frequency: base,
+      duration: 0.09 + intensity * 0.11,
+      volume: 0.03 + intensity * 0.04,
+      type: 'square',
+    })
+    this.playTone({
+      when: when + 0.05,
+      frequency: base * 1.63,
+      duration: 0.08 + intensity * 0.08,
+      volume: 0.02 + intensity * 0.03,
+      type: 'triangle',
+    })
+    this.playTone({
+      when: when + 0.16,
+      frequency: base * 0.72,
+      duration: 0.12 + intensity * 0.09,
+      volume: 0.012 + intensity * 0.018,
+      type: 'sine',
     })
   }
 

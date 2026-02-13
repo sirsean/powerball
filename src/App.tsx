@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { Stars, useGLTF, useTexture } from '@react-three/drei'
+import { Sparkles, Stars, useGLTF, useTexture } from '@react-three/drei'
 import type { Group, Mesh, MeshStandardMaterial, Object3D, PointLight, Texture } from 'three'
 import { Bloom, EffectComposer, Noise, Vignette } from '@react-three/postprocessing'
 import { BackSide, Color, MathUtils, Quaternion, RepeatWrapping, SRGBColorSpace, Vector3 } from 'three'
@@ -42,6 +42,17 @@ const ASTEROID_GLB_PATHS: string[] = [
 const SMOKE_PUFF_COUNT = 9
 const GRABBER_ARM_TARGET_OVERREACH = 0.35
 const CAPTAIN_IMAGE_PATH = '/assets/references/captain-roddard-harbarth.png'
+const HANGAR_BACKDROP_SEED = 0x4f726531
+const HANGAR_BACKDROP_ASTEROID_COUNT = 22
+const HANGAR_BAY_DOOR_X = 44
+const HANGAR_BAY_DOOR_Z = -56
+const HANGAR_BACKDROP_TRAVEL_BOUNDS = {
+  minX: HANGAR_BAY_DOOR_X - 190,
+  maxX: HANGAR_BAY_DOOR_X + 190,
+  nearZ: HANGAR_BAY_DOOR_Z - 120,
+  farZ: HANGAR_BAY_DOOR_Z - 520,
+  wrapPadding: 28,
+}
 
 const ASTEROID_TEXTURE_PATHS: Record<ResourceId | 'depleted', string> = {
   scrapIron: '/assets/textures/generated/asteroid_scrapiron_v1.svg',
@@ -50,6 +61,10 @@ const ASTEROID_TEXTURE_PATHS: Record<ResourceId | 'depleted', string> = {
   xenoCrystal: '/assets/textures/generated/asteroid_xenocrystal_v1.svg',
   fringeRelic: '/assets/textures/generated/asteroid_fringerelic_v1.svg',
   depleted: '/assets/textures/generated/asteroid_depleted_v1.svg',
+}
+const HANGAR_INTERIOR_TEXTURE_PATHS = {
+  rustBrown: '/assets/textures/generated/hangar_rustbrown_v1.svg',
+  steelGray: '/assets/textures/generated/hangar_steelgray_v1.svg',
 }
 
 interface CareerState {
@@ -80,6 +95,72 @@ const PIRATE_DANGER_LEVELS: Array<{ level: number; label: string; maxChance: num
   { level: 5, label: 'Critical', maxChance: 1 },
 ]
 const HULL_BREACH_OUTCOME_REASON = 'Your mining craft vented atmosphere and went dark.'
+const HANGAR_ASTEROID_RESOURCES: ResourceId[] = [
+  'scrapIron',
+  'waterIce',
+  'cobaltDust',
+  'xenoCrystal',
+  'fringeRelic',
+]
+const HANGAR_ASTEROID_BASE_COLORS: Record<ResourceId, string> = {
+  scrapIron: '#886e52',
+  waterIce: '#c2c0b7',
+  cobaltDust: '#7c674f',
+  xenoCrystal: '#a0ad7d',
+  fringeRelic: '#d6bf7e',
+}
+
+interface HangarBackdropAsteroid {
+  id: number
+  radius: number
+  position: Vector3
+  velocity: Vector3
+  spin: Vector3
+  resourceId: ResourceId
+  modelIndex: number
+}
+
+function seededBackdropRandom(seed: number) {
+  let state = seed >>> 0
+  return () => {
+    state = (1664525 * state + 1013904223) >>> 0
+    return state / 4294967296
+  }
+}
+
+function backdropRange(rng: () => number, min: number, max: number) {
+  return min + (max - min) * rng()
+}
+
+function createHangarBackdropAsteroids(count: number): HangarBackdropAsteroid[] {
+  const rng = seededBackdropRandom(HANGAR_BACKDROP_SEED)
+
+  return Array.from({ length: count }, (_, id) => {
+    const radius = backdropRange(rng, 2.4, 7.1)
+    const lane = id % 2 === 0 ? -1 : 1
+    return {
+      id,
+      radius,
+      position: new Vector3(
+        backdropRange(rng, HANGAR_BACKDROP_TRAVEL_BOUNDS.minX + 24, HANGAR_BACKDROP_TRAVEL_BOUNDS.maxX - 24),
+        backdropRange(rng, -18, 20),
+        backdropRange(rng, HANGAR_BACKDROP_TRAVEL_BOUNDS.farZ + 36, HANGAR_BACKDROP_TRAVEL_BOUNDS.nearZ - 18),
+      ),
+      velocity: new Vector3(
+        backdropRange(rng, 2.2, 5.4) * lane,
+        backdropRange(rng, -0.45, 0.45),
+        backdropRange(rng, -0.58, 0.72),
+      ),
+      spin: new Vector3(
+        backdropRange(rng, -0.32, 0.32),
+        backdropRange(rng, -0.32, 0.32),
+        backdropRange(rng, -0.32, 0.32),
+      ),
+      resourceId: HANGAR_ASTEROID_RESOURCES[Math.floor(rng() * HANGAR_ASTEROID_RESOURCES.length)],
+      modelIndex: Math.floor(rng() * ASTEROID_GLB_PATHS.length),
+    }
+  })
+}
 
 function getTimeDrivenPirateDangerProfile(nowMs: number): PirateDangerProfile {
   const now = new Date(nowMs)
@@ -298,6 +379,186 @@ function AsteroidField({
   )
 }
 
+function HangarBackdropScene() {
+  const asteroidRefs = useRef<Array<Group | null>>([])
+  const wrapRng = useRef(seededBackdropRandom(HANGAR_BACKDROP_SEED ^ 0x9e3779b9))
+  const asteroidMotionRef = useRef<HangarBackdropAsteroid[]>(
+    createHangarBackdropAsteroids(HANGAR_BACKDROP_ASTEROID_COUNT),
+  )
+  const asteroidSlots = useMemo(
+    () => createHangarBackdropAsteroids(HANGAR_BACKDROP_ASTEROID_COUNT),
+    [],
+  )
+  const assets = useGLTF(ASTEROID_GLB_PATHS) as Array<{ scene: Object3D }>
+  const asteroidTextureSources = useTexture([
+    ASTEROID_TEXTURE_PATHS.scrapIron,
+    ASTEROID_TEXTURE_PATHS.waterIce,
+    ASTEROID_TEXTURE_PATHS.cobaltDust,
+    ASTEROID_TEXTURE_PATHS.xenoCrystal,
+    ASTEROID_TEXTURE_PATHS.fringeRelic,
+  ]) as Texture[]
+  const hangarTextureSources = useTexture([
+    HANGAR_INTERIOR_TEXTURE_PATHS.rustBrown,
+    HANGAR_INTERIOR_TEXTURE_PATHS.steelGray,
+  ]) as Texture[]
+  const asteroidTextures = useMemo(
+    () => ({
+      scrapIron: createRepeatingTexture(asteroidTextureSources[0], 1.15, 1.15),
+      waterIce: createRepeatingTexture(asteroidTextureSources[1], 1.15, 1.15),
+      cobaltDust: createRepeatingTexture(asteroidTextureSources[2], 1.15, 1.15),
+      xenoCrystal: createRepeatingTexture(asteroidTextureSources[3], 1.15, 1.15),
+      fringeRelic: createRepeatingTexture(asteroidTextureSources[4], 1.15, 1.15),
+    }),
+    [asteroidTextureSources],
+  )
+  const hangarTextures = useMemo(
+    () => ({
+      rustBrown: createRepeatingTexture(hangarTextureSources[0], 2.8, 2.8),
+      steelGray: createRepeatingTexture(hangarTextureSources[1], 3.4, 3.4),
+    }),
+    [hangarTextureSources],
+  )
+  const asteroidModels = useMemo(
+    () =>
+      asteroidSlots.map((asteroid) => {
+        const asset = assets[asteroid.modelIndex % assets.length]
+        const model = cloneModelWithShadows(asset.scene)
+        const richTexture = asteroidTextures[asteroid.resourceId]
+        model.traverse((node) => {
+          const mesh = node as Mesh
+          if (!mesh.isMesh) return
+          const material = mesh.material as MeshStandardMaterial
+          if (!material) return
+          material.userData.activeTriMap = richTexture
+          configureTriplanarMaterial(material, richTexture, 0.32)
+          material.color.set(HANGAR_ASTEROID_BASE_COLORS[asteroid.resourceId])
+          material.roughness = 0.66
+          material.metalness = 0.08
+          material.emissive.set('#2b241b')
+          material.emissiveIntensity = 0.2
+        })
+        return model
+      }),
+    [assets, asteroidTextures, asteroidSlots],
+  )
+
+  useFrame((state, delta) => {
+    const asteroids = asteroidMotionRef.current
+    const { minX, maxX, nearZ, farZ, wrapPadding } = HANGAR_BACKDROP_TRAVEL_BOUNDS
+    const now = state.clock.elapsedTime
+    for (let i = 0; i < asteroids.length; i += 1) {
+      const asteroid = asteroids[i]
+      const node = asteroidRefs.current[i]
+      asteroid.position.addScaledVector(asteroid.velocity, delta)
+
+      if (asteroid.position.x > maxX + wrapPadding) {
+        asteroid.position.x = minX - backdropRange(wrapRng.current, 12, 44)
+        asteroid.position.y = backdropRange(wrapRng.current, -24, 24)
+        asteroid.position.z = backdropRange(wrapRng.current, farZ + 28, nearZ - 28)
+      } else if (asteroid.position.x < minX - wrapPadding) {
+        asteroid.position.x = maxX + backdropRange(wrapRng.current, 12, 44)
+        asteroid.position.y = backdropRange(wrapRng.current, -24, 24)
+        asteroid.position.z = backdropRange(wrapRng.current, farZ + 28, nearZ - 28)
+      }
+
+      if (asteroid.position.z > nearZ + wrapPadding) {
+        asteroid.position.x = backdropRange(wrapRng.current, minX + 16, maxX - 16)
+        asteroid.position.y = backdropRange(wrapRng.current, -24, 24)
+        asteroid.position.z = farZ - backdropRange(wrapRng.current, 18, 90)
+      } else if (asteroid.position.z < farZ - wrapPadding) {
+        asteroid.position.x = backdropRange(wrapRng.current, minX + 16, maxX - 16)
+        asteroid.position.y = backdropRange(wrapRng.current, -24, 24)
+        asteroid.position.z = nearZ - backdropRange(wrapRng.current, 24, 110)
+      }
+
+      if (!node) continue
+      node.position.set(
+        asteroid.position.x,
+        asteroid.position.y + Math.sin(now * 0.45 + asteroid.id * 0.9) * 0.45,
+        asteroid.position.z,
+      )
+      node.scale.setScalar(asteroid.radius / 2.7)
+      node.rotation.x += asteroid.spin.x * delta
+      node.rotation.y += asteroid.spin.y * delta
+      node.rotation.z += asteroid.spin.z * delta
+    }
+  })
+
+  return (
+    <>
+      <color attach="background" args={['#020305']} />
+
+      <ambientLight intensity={0.76} color="#d7cab5" />
+      <hemisphereLight intensity={0.62} color="#a4bfd8" groundColor="#2f2923" />
+      <pointLight position={[2, 11, -20]} intensity={120} distance={260} color="#efd0a8" />
+      <pointLight position={[HANGAR_BAY_DOOR_X, 8, HANGAR_BAY_DOOR_Z - 82]} intensity={170} distance={340} color="#9dbcd8" />
+      <pointLight position={[-34, 6, -6]} intensity={38} distance={180} color="#aab4c2" />
+      <pointLight position={[58, 6, -8]} intensity={34} distance={180} color="#aab4c2" />
+      <pointLight position={[12, -8, -34]} intensity={30} distance={170} color="#8798ab" />
+
+      <mesh position={[0, -14.5, -12]}>
+        <boxGeometry args={[132, 1, 116]} />
+        <meshStandardMaterial map={hangarTextures.steelGray} color="#d2dae0" roughness={0.65} metalness={0.2} />
+      </mesh>
+      <mesh position={[0, 16, -12]}>
+        <boxGeometry args={[132, 1.4, 116]} />
+        <meshStandardMaterial map={hangarTextures.steelGray} color="#c8d2db" roughness={0.6} metalness={0.22} />
+      </mesh>
+      <mesh position={[-66, 1, -12]}>
+        <boxGeometry args={[1.8, 31, 116]} />
+        <meshStandardMaterial map={hangarTextures.rustBrown} color="#ccb59d" roughness={0.68} metalness={0.14} />
+      </mesh>
+      <mesh position={[66, 1, -12]}>
+        <boxGeometry args={[1.8, 31, 116]} />
+        <meshStandardMaterial map={hangarTextures.rustBrown} color="#ccb59d" roughness={0.68} metalness={0.14} />
+      </mesh>
+
+      <mesh position={[HANGAR_BAY_DOOR_X - 24, 1, HANGAR_BAY_DOOR_Z]}>
+        <boxGeometry args={[18, 30, 2.2]} />
+        <meshStandardMaterial map={hangarTextures.rustBrown} color="#d1baa4" roughness={0.6} metalness={0.2} />
+      </mesh>
+      <mesh position={[HANGAR_BAY_DOOR_X + 24, 1, HANGAR_BAY_DOOR_Z]}>
+        <boxGeometry args={[18, 30, 2.2]} />
+        <meshStandardMaterial map={hangarTextures.rustBrown} color="#d1baa4" roughness={0.6} metalness={0.2} />
+      </mesh>
+      <mesh position={[HANGAR_BAY_DOOR_X, 14, HANGAR_BAY_DOOR_Z]}>
+        <boxGeometry args={[30, 4, 2.2]} />
+        <meshStandardMaterial map={hangarTextures.steelGray} color="#cbd5df" roughness={0.55} metalness={0.24} />
+      </mesh>
+      <mesh position={[HANGAR_BAY_DOOR_X, -11.8, HANGAR_BAY_DOOR_Z]}>
+        <boxGeometry args={[30, 3.2, 2.2]} />
+        <meshStandardMaterial map={hangarTextures.steelGray} color="#c2ccd6" roughness={0.6} metalness={0.2} />
+      </mesh>
+
+      <mesh position={[HANGAR_BAY_DOOR_X, 12.7, HANGAR_BAY_DOOR_Z + 0.45]}>
+        <boxGeometry args={[27.6, 0.42, 0.8]} />
+        <meshStandardMaterial color="#8096ad" emissive="#6a8cae" emissiveIntensity={0.68} metalness={0.26} />
+      </mesh>
+
+      <pointLight position={[11, -3, -20]} intensity={30} distance={64} color="#afbac7" />
+      <HangarDockedSmallcraft />
+
+      <Stars radius={520} depth={320} count={6800} factor={5.2} saturation={0} fade={false} speed={0.18} />
+      <group position={[HANGAR_BAY_DOOR_X, 1, HANGAR_BAY_DOOR_Z - 136]}>
+        <Stars radius={220} depth={130} count={1400} factor={6.4} saturation={0} fade={false} speed={0} />
+        <Sparkles count={110} size={5.2} speed={0.05} opacity={0.78} noise={0.2} color="#e7efff" scale={[76, 46, 92]} />
+      </group>
+      {asteroidSlots.map((asteroid, index) => (
+        <group
+          key={`hangar-asteroid-${asteroid.id}`}
+          ref={(node) => {
+            asteroidRefs.current[index] = node
+          }}
+          position={[asteroid.position.x, asteroid.position.y, asteroid.position.z]}
+          scale={[asteroid.radius / 2.7, asteroid.radius / 2.7, asteroid.radius / 2.7]}
+        >
+          <primitive object={asteroidModels[index]} />
+        </group>
+      ))}
+    </>
+  )
+}
+
 function Freighter({ freighterRef }: { freighterRef: React.RefObject<Group | null> }) {
   const gltf = useGLTF('/assets/models/freighter_v1.glb')
   const freighterBaseTexture = useTexture('/assets/textures/generated/freighter_hull_v1.svg')
@@ -330,6 +591,49 @@ function PlayerCraft({ playerRef }: { playerRef: React.RefObject<Group | null> }
 
   return (
     <group ref={playerRef} position={[-77, 0, 0]}>
+      <primitive object={model} />
+    </group>
+  )
+}
+
+function HangarDockedSmallcraft() {
+  const gltf = useGLTF('/assets/models/smallcraft_v1.glb')
+  const smallcraftBaseTexture = useTexture('/assets/textures/generated/smallcraft_hull_v1.svg')
+  const smallcraftTexture = useMemo(
+    () => createRepeatingTexture(smallcraftBaseTexture, 1.9, 1.9),
+    [smallcraftBaseTexture],
+  )
+  const model = useMemo(() => {
+    const cloned = cloneModelWithShadows(gltf.scene)
+    paintModelTexture(cloned, smallcraftTexture, new Set(['player_engine_flame', 'smallcraft_tool_glow']))
+    cloned.traverse((node) => {
+      const mesh = node as Mesh
+      if (!mesh.isMesh || !mesh.material) return
+      const tuneMaterial = (candidate: unknown) => {
+        const material = candidate as MeshStandardMaterial
+        if (!material) return
+        if (material.name === 'player_engine_flame') {
+          material.color.set('#5f6672')
+          material.emissive.set('#1f2731')
+          material.emissiveIntensity = 0.06
+        } else if (material.name === 'smallcraft_tool_glow') {
+          material.color.set('#7b838d')
+          material.emissive.set('#2a3038')
+          material.emissiveIntensity = 0.08
+        }
+      }
+
+      if (Array.isArray(mesh.material)) {
+        mesh.material.forEach(tuneMaterial)
+      } else {
+        tuneMaterial(mesh.material)
+      }
+    })
+    return cloned
+  }, [gltf.scene, smallcraftTexture])
+
+  return (
+    <group position={[11, -8.7, -20]} rotation={[Math.PI / 36, Math.PI * 1.7333333333, 0]} scale={3.24}>
       <primitive object={model} />
     </group>
   )
@@ -1134,122 +1438,130 @@ function HangarView({
 
   return (
     <div className="hangar-view">
-      <section className="hud-card hangar-header">
-        <h1>POWERBALL // FREIGHTER HANGAR</h1>
-        <div className="metric-grid">
-          <div>
-            <label>Credits</label>
-            <strong>{career.credits.toLocaleString()} cr</strong>
+      <div className="hangar-column-left">
+        <section className="hud-card hangar-header">
+          <h1>POWERBALL // FREIGHTER HANGAR</h1>
+          <div className="metric-grid">
+            <div>
+              <label>Credits</label>
+              <strong>{career.credits.toLocaleString()} cr</strong>
+            </div>
+            <div>
+              <label>Powerballs Delivered</label>
+              <strong>{career.deliveredPowerballs}</strong>
+            </div>
+            <div>
+              <label>Runs Completed</label>
+              <strong>{career.runsCompleted}</strong>
+            </div>
+            <div>
+              <label>Launch Profile</label>
+              <strong>
+                GR {runMods.grabberRange.toFixed(1)}m | H {runMods.maxHull.toFixed(0)} | C {runMods.cargoCapacity} | RM{' '}
+                {runMods.rammerDamageMultiplier.toFixed(2)}x / {Math.round(runMods.rammerSelfDamageMultiplier * 100)}%
+              </strong>
+            </div>
+            <div>
+              <label>Pirate Danger</label>
+              <strong>
+                {pirateDanger.label} (L{pirateDanger.level})
+              </strong>
+            </div>
+            <div>
+              <label>Pirate Contact Odds</label>
+              <strong>{Math.round(pirateDanger.encounterChance * 100)}%</strong>
+            </div>
           </div>
-          <div>
-            <label>Powerballs Delivered</label>
-            <strong>{career.deliveredPowerballs}</strong>
-          </div>
-          <div>
-            <label>Runs Completed</label>
-            <strong>{career.runsCompleted}</strong>
-          </div>
-          <div>
-            <label>Launch Profile</label>
-            <strong>
-              GR {runMods.grabberRange.toFixed(1)}m | H {runMods.maxHull.toFixed(0)} | C {runMods.cargoCapacity} | RM{' '}
-              {runMods.rammerDamageMultiplier.toFixed(2)}x / {Math.round(runMods.rammerSelfDamageMultiplier * 100)}%
-            </strong>
-          </div>
-          <div>
-            <label>Pirate Danger</label>
-            <strong>
-              {pirateDanger.label} (L{pirateDanger.level})
-            </strong>
-          </div>
-          <div>
-            <label>Pirate Contact Odds</label>
-            <strong>{Math.round(pirateDanger.encounterChance * 100)}%</strong>
-          </div>
-        </div>
-      </section>
-
-      {debrief && (
-        <section className="hud-card hangar-debrief">
-          <h2>{debrief.status === 'won' ? 'Run Debrief: Success' : 'Run Debrief: Failure'}</h2>
-          <p>{debrief.message}</p>
-          {debrief.status === 'won' && (
-            <p className="subtle">
-              Banked this run: +{debrief.creditsDelta.toLocaleString()} credits, +{debrief.powerballsDelta} powerballs
-            </p>
-          )}
-          {debrief.status === 'lost' && (
-            <p className="subtle">All ship upgrades reset to level 0 after mission failure.</p>
-          )}
         </section>
-      )}
 
-      <section className="hangar-upgrades">
-        {UPGRADE_ORDER.map((key) => {
-          const def = UPGRADE_DEFINITIONS[key]
-          const currentLevel = career.upgrades[key]
-          const nextLevel = currentLevel + 1
-          const atMax = currentLevel >= def.maxLevel
-          const nextCost = getUpgradeCost(def, nextLevel)
-          const requiredPowerballs = getUpgradePowerballRequirement(def, nextLevel)
-          const lockedByPowerballs = career.deliveredPowerballs < requiredPowerballs
-          const lockedByCredits = career.credits < nextCost
-          const canBuy = !atMax && !lockedByPowerballs && !lockedByCredits
-          const currentSummary = getUpgradeStatSummary(def.key, currentLevel)
-          const nextSummary = atMax ? 'max level reached' : getUpgradeStatSummary(def.key, nextLevel)
+        {debrief && (
+          <section className="hud-card hangar-debrief">
+            <h2>{debrief.status === 'won' ? 'Run Debrief: Success' : 'Run Debrief: Failure'}</h2>
+            <p>{debrief.message}</p>
+            {debrief.status === 'won' && (
+              <p className="subtle">
+                Banked this run: +{debrief.creditsDelta.toLocaleString()} credits, +{debrief.powerballsDelta} powerballs
+              </p>
+            )}
+            {debrief.status === 'lost' && (
+              <p className="subtle">All ship upgrades reset to level 0 after mission failure.</p>
+            )}
+          </section>
+        )}
 
-          let buyLabel = `Buy Level ${nextLevel}`
-          if (atMax) buyLabel = 'Max Level'
-          else if (lockedByPowerballs) buyLabel = 'Locked: Prestige Required'
-          else if (lockedByCredits) buyLabel = 'Insufficient Credits'
+        <section className="hud-card hangar-launch">
+          <h2>Ready Bay</h2>
+          <p className="subtle">Launch when ready. Loadout locks for the next asteroid run.</p>
+          <button className="hangar-launch-btn" onClick={onLaunch}>
+            Launch Smallcraft
+          </button>
+        </section>
 
-          return (
-            <article className="hud-card hangar-upgrade-card" key={def.key}>
-              <h2>{def.label}</h2>
-              <p>{def.description}</p>
-              <div className="dock-progress-row">
-                <label>Level</label>
-                <strong>
-                  {currentLevel} / {def.maxLevel}
-                </strong>
-              </div>
-              <div className="dock-progress-row">
-                <label>Current Effect</label>
-                <strong>{currentSummary}</strong>
-              </div>
-              <div className="dock-progress-row">
-                <label>Next Level Effect</label>
-                <strong>{nextSummary}</strong>
-              </div>
-              {!atMax && (
-                <div className="dock-progress-row">
-                  <label>Next Cost</label>
-                  <strong>{nextCost.toLocaleString()} cr</strong>
+        <section className="hangar-upgrades">
+          {UPGRADE_ORDER.map((key) => {
+            const def = UPGRADE_DEFINITIONS[key]
+            const currentLevel = career.upgrades[key]
+            const nextLevel = currentLevel + 1
+            const atMax = currentLevel >= def.maxLevel
+            const nextCost = getUpgradeCost(def, nextLevel)
+            const requiredPowerballs = getUpgradePowerballRequirement(def, nextLevel)
+            const lockedByPowerballs = career.deliveredPowerballs < requiredPowerballs
+            const lockedByCredits = career.credits < nextCost
+            const canBuy = !atMax && !lockedByPowerballs && !lockedByCredits
+            const currentSummary = getUpgradeStatSummary(def.key, currentLevel)
+            const nextSummary = atMax ? 'max level reached' : getUpgradeStatSummary(def.key, nextLevel)
+
+            let buyLabel = `Buy Level ${nextLevel}`
+            if (atMax) buyLabel = 'Max Level'
+            else if (lockedByPowerballs) buyLabel = 'Locked: Prestige Required'
+            else if (lockedByCredits) buyLabel = 'Insufficient Credits'
+
+            return (
+              <article className="hud-card hangar-upgrade-card" key={def.key}>
+                <div className="hangar-upgrade-layout">
+                  <div className="hangar-upgrade-copy">
+                    <h2>{def.label}</h2>
+                    <p>{def.description}</p>
+                    <button className="hangar-upgrade-btn" onClick={() => onBuyUpgrade(def.key)} disabled={!canBuy}>
+                      {buyLabel}
+                    </button>
+                  </div>
+                  <div className="hangar-upgrade-stats">
+                    <div className="dock-progress-row">
+                      <label>Level</label>
+                      <strong>
+                        {currentLevel} / {def.maxLevel}
+                      </strong>
+                    </div>
+                    <div className="dock-progress-row">
+                      <label>Current Effect</label>
+                      <strong>{currentSummary}</strong>
+                    </div>
+                    <div className="dock-progress-row">
+                      <label>Next Level Effect</label>
+                      <strong>{nextSummary}</strong>
+                    </div>
+                    {!atMax && (
+                      <div className="dock-progress-row">
+                        <label>Next Cost</label>
+                        <strong>{nextCost.toLocaleString()} cr</strong>
+                      </div>
+                    )}
+                    {!atMax && (
+                      <div className="dock-progress-row">
+                        <label>Prestige Gate</label>
+                        <strong>
+                          {career.deliveredPowerballs} / {requiredPowerballs} powerballs
+                        </strong>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
-              {!atMax && (
-                <div className="dock-progress-row">
-                  <label>Prestige Gate</label>
-                  <strong>
-                    {career.deliveredPowerballs} / {requiredPowerballs} powerballs
-                  </strong>
-                </div>
-              )}
-              <button className="hangar-upgrade-btn" onClick={() => onBuyUpgrade(def.key)} disabled={!canBuy}>
-                {buyLabel}
-              </button>
-            </article>
-          )
-        })}
-      </section>
-
-      <section className="hud-card hangar-launch">
-        <h2>Ready Bay</h2>
-        <p className="subtle">Launch when ready. Loadout locks for the next asteroid run.</p>
-        <button className="hangar-launch-btn" onClick={onLaunch}>
-          Launch Smallcraft
-        </button>
-      </section>
+              </article>
+            )
+          })}
+        </section>
+      </div>
     </div>
   )
 }
@@ -1284,6 +1596,15 @@ function App() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    const tickInterfaceAudio = () => {
+      audioRef.current?.updateInterfaceAudio(screen)
+    }
+    tickInterfaceAudio()
+    const timer = window.setInterval(tickInterfaceAudio, 140)
+    return () => window.clearInterval(timer)
+  }, [screen])
 
   useEffect(() => {
     if (screen !== 'loading') return
@@ -1446,8 +1767,21 @@ function App() {
   if (screen === 'hangar') {
     return (
       <main className="game-shell">
+        <div className="hangar-scene hangar-scene-right">
+          <Canvas
+            camera={{ position: [-12, 0, 26], fov: 52, near: 0.1, far: 650 }}
+            dpr={[1, 1.5]}
+            onCreated={({ gl }) => {
+              gl.toneMappingExposure = 1.55
+            }}
+          >
+            <HangarBackdropScene />
+          </Canvas>
+        </div>
+        <div className="hangar-left-shade" />
+        <div className="hangar-split-divider" />
         <div className="hangar-background" />
-        <div className="crt-overlay" />
+        <div className="crt-overlay hangar-crt-overlay" />
         <HangarView
           career={career}
           debrief={debrief}
@@ -1496,5 +1830,7 @@ useTexture.preload('/assets/textures/generated/asteroid_cobaltdust_v1.svg')
 useTexture.preload('/assets/textures/generated/asteroid_xenocrystal_v1.svg')
 useTexture.preload('/assets/textures/generated/asteroid_fringerelic_v1.svg')
 useTexture.preload('/assets/textures/generated/asteroid_depleted_v1.svg')
+useTexture.preload('/assets/textures/generated/hangar_rustbrown_v1.svg')
+useTexture.preload('/assets/textures/generated/hangar_steelgray_v1.svg')
 
 export default App

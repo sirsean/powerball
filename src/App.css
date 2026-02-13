@@ -9,6 +9,10 @@
   --good: #a6c08b;
   --alert: #e59e77;
   --info: #c9b08e;
+  --scroll-track: rgb(28 35 42 / 72%);
+  --scroll-thumb: rgb(132 104 73 / 82%);
+  --scroll-thumb-hover: rgb(165 128 93 / 88%);
+  --scroll-thumb-border: rgb(58 46 35 / 88%);
 }
 
 .game-shell {
@@ -31,40 +35,112 @@ canvas {
 .hangar-background {
   position: absolute;
   inset: 0;
+  pointer-events: none;
+  background: transparent;
+}
+
+.hangar-scene {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hangar-scene-right {
+  inset: 0 0 0 47%;
+}
+
+.hangar-left-shade {
+  position: absolute;
+  inset: 0 53% 0 0;
+  pointer-events: none;
   background:
-    radial-gradient(circle at 50% 6%, rgb(210 153 88 / 16%) 0%, transparent 42%),
-    radial-gradient(circle at 18% 84%, rgb(114 82 52 / 20%) 0%, transparent 40%),
-    linear-gradient(180deg, #090d10 0%, #11171c 60%, #171d23 100%);
+    linear-gradient(180deg, rgb(7 10 14 / 44%) 0%, rgb(8 12 16 / 58%) 56%, rgb(9 14 18 / 72%) 100%),
+    radial-gradient(circle at 34% 8%, rgb(223 184 134 / 14%) 0%, transparent 44%);
+  z-index: 2;
+}
+
+.hangar-split-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 47%;
+  width: 2px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgb(199 165 118 / 58%) 0%, rgb(112 126 141 / 42%) 100%);
+  box-shadow: 0 0 22px rgb(146 168 196 / 28%);
+  z-index: 2;
 }
 
 .hangar-view {
   position: absolute;
-  inset: 1rem;
+  top: 1rem;
+  bottom: 1rem;
+  left: 1rem;
+  width: min(58rem, calc(47% - 1.5rem));
+  overflow: auto;
+  pointer-events: auto;
+  z-index: 3;
+}
+
+.hangar-column-left {
+  min-width: 0;
   display: grid;
   grid-template-columns: 1fr;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr;
   gap: 1rem;
   overflow: auto;
+  padding-right: 0.2rem;
   pointer-events: auto;
 }
 
 .hangar-header {
-  width: min(62rem, 100%);
+  width: 100%;
 }
 
 .hangar-debrief {
-  width: min(62rem, 100%);
+  width: 100%;
 }
 
 .hangar-upgrades {
-  width: min(74rem, 100%);
+  width: 100%;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  grid-template-columns: 1fr;
   gap: 0.9rem;
 }
 
-.hangar-upgrade-card p {
+.hangar-upgrade-card {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.hangar-upgrade-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(16rem, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.hangar-upgrade-copy p {
   min-height: 2.4rem;
+  margin: 0.18rem 0 0;
+}
+
+.hangar-upgrade-stats {
+  display: grid;
+  align-content: start;
+}
+
+.hangar-upgrade-stats .dock-progress-row {
+  margin-top: 0.3rem;
+}
+
+.hangar-upgrade-stats .dock-progress-row:first-child {
+  margin-top: 0;
+}
+
+.hangar-upgrade-copy .hangar-upgrade-btn {
+  margin-top: 0.62rem;
+  width: min(14rem, 100%);
 }
 
 .hangar-upgrade-btn,
@@ -85,7 +161,37 @@ canvas {
 }
 
 .hangar-launch {
-  width: min(28rem, 100%);
+  width: 100%;
+}
+
+.hangar-crt-overlay {
+  opacity: 0;
+}
+
+:is(.hangar-view, .hangar-column-left, .hud-card-scroll, .hud-layout) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+
+:is(.hangar-view, .hangar-column-left, .hud-card-scroll, .hud-layout)::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+:is(.hangar-view, .hangar-column-left, .hud-card-scroll, .hud-layout)::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, rgb(22 30 36 / 88%) 0%, rgb(18 24 30 / 88%) 100%);
+  border: 1px solid rgb(64 75 86 / 35%);
+  border-radius: 10px;
+}
+
+:is(.hangar-view, .hangar-column-left, .hud-card-scroll, .hud-layout)::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--scroll-thumb) 0%, rgb(100 79 59 / 88%) 100%);
+  border: 1px solid var(--scroll-thumb-border);
+  border-radius: 10px;
+}
+
+:is(.hangar-view, .hangar-column-left, .hud-card-scroll, .hud-layout)::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--scroll-thumb-hover) 0%, rgb(124 95 66 / 92%) 100%);
 }
 
 .hangar-launch-btn {
@@ -595,6 +701,50 @@ canvas {
 }
 
 @media (max-width: 900px) {
+  .hangar-scene-right {
+    inset: 0;
+  }
+
+  .hangar-left-shade,
+  .hangar-split-divider {
+    display: none;
+  }
+
+  .hangar-view {
+    inset: 0.75rem;
+    width: auto;
+    top: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    left: 0.75rem;
+    pointer-events: auto;
+  }
+
+  .hangar-column-left {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .hangar-upgrade-layout {
+    grid-template-columns: 1fr;
+    gap: 0.6rem;
+  }
+
+  .hangar-upgrade-copy p {
+    min-height: 0;
+  }
+
+  .hangar-upgrade-copy .hangar-upgrade-btn {
+    width: 100%;
+  }
+
+  .hangar-observation {
+    grid-column: 1;
+    justify-self: stretch;
+    width: 100%;
+    align-self: start;
+  }
+
   .loading-view {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(12rem, 36vh);
