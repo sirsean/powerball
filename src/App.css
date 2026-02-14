@@ -249,7 +249,116 @@ canvas {
   opacity: 0.52;
 }
 
+.hangar-launch-btn:disabled {
+  opacity: 0.52;
+  filter: saturate(0.62);
+  cursor: not-allowed;
+}
+
 .hangar-launch {
+  width: 100%;
+}
+
+.hangar-encounter-button {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 4;
+  width: 5rem;
+  height: 5rem;
+  border-radius: 999px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgb(178 145 106 / 74%);
+  background: linear-gradient(180deg, #4f3a2a 0%, #2e2219 100%);
+  box-shadow: 0 0 22px rgb(0 0 0 / 56%);
+}
+
+.hangar-encounter-button:hover {
+  filter: brightness(1.05);
+}
+
+.hangar-encounter-button-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  filter: contrast(1.04) saturate(0.88);
+}
+
+.hangar-encounter-panel {
+  position: absolute;
+  top: 1rem;
+  bottom: 1rem;
+  left: calc(47% + 1rem);
+  width: calc(53% - 2rem);
+  max-width: calc(53% - 2rem);
+  z-index: 4;
+  display: grid;
+  grid-template-rows: auto minmax(14rem, 1fr) auto auto;
+  gap: 0.6rem;
+  overflow: auto;
+  overflow-x: hidden;
+}
+
+.hangar-encounter-topbar > div {
+  min-width: 0;
+}
+
+.hangar-encounter-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 0.6rem;
+}
+
+.hangar-encounter-topbar strong {
+  display: block;
+  font-size: 0.95rem;
+  color: #f0ce9f;
+  overflow-wrap: anywhere;
+}
+
+.hangar-encounter-close {
+  margin-top: 0;
+  min-width: 5.5rem;
+}
+
+.hangar-encounter-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(12.5rem, 0.8fr);
+  gap: 0.7rem;
+  align-items: start;
+}
+
+.hangar-encounter-portrait {
+  width: 100%;
+  height: clamp(12rem, 30vh, 18rem);
+  object-fit: cover;
+  object-position: center top;
+  border: 1px solid rgb(140 111 82 / 52%);
+  border-radius: 0.32rem;
+  background: rgb(10 14 18 / 58%);
+}
+
+.hangar-encounter-copy {
+  display: grid;
+  gap: 0.24rem;
+}
+
+.hangar-encounter-copy p {
+  margin: 0;
+}
+
+.hangar-encounter-delivery {
+  border: 1px solid rgb(132 104 73 / 42%);
+  background: linear-gradient(180deg, rgb(27 34 41 / 42%) 0%, rgb(18 23 28 / 38%) 100%);
+  border-radius: 0.28rem;
+  padding: 0.46rem 0.58rem;
+}
+
+.hangar-encounter-complete {
+  margin-top: 0;
   width: 100%;
 }
 
@@ -807,6 +916,26 @@ canvas {
     bottom: 0.75rem;
     left: 0.75rem;
     pointer-events: auto;
+  }
+
+  .hangar-encounter-button {
+    right: 0.75rem;
+    bottom: 0.75rem;
+    width: 4.6rem;
+    height: 4.6rem;
+  }
+
+  .hangar-encounter-panel {
+    top: 0.75rem;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    left: 0.75rem;
+    width: auto;
+    max-width: none;
+  }
+
+  .hangar-encounter-body {
+    grid-template-columns: 1fr;
   }
 
   .hangar-column-left {

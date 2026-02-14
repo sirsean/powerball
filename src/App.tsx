@@ -52,6 +52,8 @@ const ASTEROID_GLB_PATHS: string[] = [
 const SMOKE_PUFF_COUNT = 9
 const GRABBER_ARM_TARGET_OVERREACH = 0.35
 const CAPTAIN_IMAGE_PATH = '/assets/references/captain-roddard-harbarth.png'
+const MISSION_SUPPLICANT_IMAGE_PATH = '/assets/encounters/water-ice-family-appeal-v1.png'
+const MISSION_SUPPLICANT_SUCCESS_IMAGE_PATH = '/assets/encounters/water-ice-family-success-v1.png'
 const HANGAR_BACKDROP_SEED = 0x4f726531
 const HANGAR_BACKDROP_ASTEROID_COUNT = 22
 const HANGAR_BAY_DOOR_X = 44
@@ -85,6 +87,7 @@ interface CareerState {
   inventory: UpgradeInventory
   loadout: UpgradeLoadout
   freighterOre: ResourceUnitCounts
+  completedMissionIds: string[]
   runsCompleted: number
 }
 
@@ -92,6 +95,32 @@ interface DebriefReport {
   status: 'won' | 'lost'
   message: string
   runCollectedResources: HudResourceTally[]
+}
+
+interface HangarMissionRequirement {
+  resourceId: ResourceId
+  units: number
+}
+
+interface HangarMissionRewardUpgrade {
+  kind: 'upgrade'
+  key: UpgradeKey
+  level: number
+  amount: number
+}
+
+interface HangarMissionDef {
+  id: string
+  title: string
+  requesterName: string
+  availableAfterRuns: number
+  portraitPath: string
+  successPortraitPath: string
+  encounterText: string[]
+  successText: string[]
+  requirement: HangarMissionRequirement
+  reward: HangarMissionRewardUpgrade
+  rewardLabel: string
 }
 
 function addTalliesToResourceCounts(
@@ -103,6 +132,27 @@ function addTalliesToResourceCounts(
     next[tally.resourceId] = (next[tally.resourceId] ?? 0) + tally.units
   }
   return next
+}
+
+function getFirstAvailableHangarMission(career: CareerState): HangarMissionDef | null {
+  return (
+    HANGAR_MISSIONS.find(
+      (mission) =>
+        career.runsCompleted >= mission.availableAfterRuns && !career.completedMissionIds.includes(mission.id),
+    ) ?? null
+  )
+}
+
+function getHangarMissionById(id: string): HangarMissionDef | null {
+  return HANGAR_MISSIONS.find((mission) => mission.id === id) ?? null
+}
+
+function getMissionAvailableUnits(career: CareerState, mission: HangarMissionDef) {
+  return Math.max(0, career.freighterOre[mission.requirement.resourceId] ?? 0)
+}
+
+function canCompleteHangarMission(career: CareerState, mission: HangarMissionDef) {
+  return getMissionAvailableUnits(career, mission) >= mission.requirement.units
 }
 
 interface PirateDangerProfile {
@@ -134,6 +184,37 @@ const HANGAR_ASTEROID_BASE_COLORS: Record<AsteroidResourceId, string> = {
   fringeRelic: '#d6bf7e',
 }
 const RESOURCE_DEFS = getResourceDefinitions()
+const HANGAR_MISSIONS: HangarMissionDef[] = [
+  {
+    id: 'family-compressor-water-ice',
+    title: 'Cold Chain Emergency',
+    requesterName: 'Frightened Passenger',
+    availableAfterRuns: 3,
+    portraitPath: MISSION_SUPPLICANT_IMAGE_PATH,
+    successPortraitPath: MISSION_SUPPLICANT_SUCCESS_IMAGE_PATH,
+    encounterText: [
+      'Please... our berth has gone warm. The compressor died two watches ago, and my little ones are already burning up.',
+      "They need cold air and steady pressure to make it through the night. I've gone hatch to hatch, and every door shuts in my face.",
+      "If you can bring enough ice to keep the lines cold, we don't have much, but I'll give you anything we have left. There's some old hull plating in our locker. Just don't let them fade out here.",
+    ],
+    successText: [
+      "You did it. The cabin's cold again, and their breathing has settled.",
+      "You saved my family out here in the dark, and I will never forget it.",
+      "When we make planetside, look me up. You'll always be a friend to me and mine.",
+    ],
+    requirement: {
+      resourceId: 'waterIce',
+      units: 15,
+    },
+    reward: {
+      kind: 'upgrade',
+      key: 'hull',
+      level: 1,
+      amount: 1,
+    },
+    rewardLabel: '1x Hull Plating (Level 1)',
+  },
+]
 
 interface HangarBackdropAsteroid {
   id: number
@@ -1395,6 +1476,103 @@ function HudPanel({
   )
 }
 
+function HangarMissionEncounter({
+  mission,
+  mode,
+  isOpen,
+  availableUnits,
+  canComplete,
+  onOpen,
+  onClose,
+  onComplete,
+}: {
+  mission: HangarMissionDef | null
+  mode: 'request' | 'success'
+  isOpen: boolean
+  availableUnits: number
+  canComplete: boolean
+  onOpen: () => void
+  onClose: () => void
+  onComplete: () => void
+}) {
+  if (!mission) return null
+
+  const isSuccessMode = mode === 'success'
+  const requirementDef = RESOURCE_DEFS[mission.requirement.resourceId]
+  const missingUnits = Math.max(0, mission.requirement.units - availableUnits)
+  const canSubmit = canComplete && missingUnits <= 0
+
+  if (!isOpen && !isSuccessMode) {
+    return (
+      <button
+        className="hangar-encounter-button"
+        onClick={onOpen}
+        aria-label={`Open mission encounter: ${mission.title}`}
+        title={`Mission Encounter: ${mission.title}`}
+      >
+        <img src={mission.portraitPath} alt={mission.requesterName} className="hangar-encounter-button-image" />
+      </button>
+    )
+  }
+
+  return (
+    <section className="hud-card hangar-encounter-panel">
+      <div className="hangar-encounter-topbar">
+        <div>
+          <h2>{isSuccessMode ? 'Mission Complete' : 'Mission Encounter'}</h2>
+          <strong>{mission.title}</strong>
+        </div>
+        <button className="hangar-upgrade-btn hangar-encounter-close" onClick={onClose}>
+          Close
+        </button>
+      </div>
+
+      <div className="hangar-encounter-body">
+        <div className="hangar-encounter-copy">
+          {(isSuccessMode ? mission.successText : mission.encounterText).map((line) => (
+            <p key={`mission-${mission.id}-${line}`}>{line}</p>
+          ))}
+        </div>
+        <img
+          src={isSuccessMode ? mission.successPortraitPath : mission.portraitPath}
+          alt=""
+          className="hangar-encounter-portrait"
+        />
+      </div>
+
+      {!isSuccessMode && (
+        <div className="hangar-encounter-delivery">
+          <div className="dock-progress-row">
+            <label>Required Delivery</label>
+            <strong>
+              {mission.requirement.units}u {requirementDef.label}
+            </strong>
+          </div>
+          <div className="dock-progress-row">
+            <label>Freighter Inventory</label>
+            <strong>{availableUnits}u available</strong>
+          </div>
+          <div className="dock-progress-row">
+            <label>Mission Reward</label>
+            <strong>{mission.rewardLabel}</strong>
+          </div>
+          {!canComplete && (
+            <p className="subtle">
+              Need {missingUnits} more units of {requirementDef.label} before this mission can be completed.
+            </p>
+          )}
+        </div>
+      )}
+
+      {!isSuccessMode && (
+        <button className="hangar-launch-btn hangar-encounter-complete" onClick={onComplete} disabled={!canSubmit}>
+          Complete Mission
+        </button>
+      )}
+    </section>
+  )
+}
+
 function LoadingBriefingView({
   loadingProgress,
   loadingReady,
@@ -1684,6 +1862,7 @@ function App() {
     inventory: createUpgradeInventory(),
     loadout: createUpgradeLoadout(),
     freighterOre: createEmptyResourceUnitCounts(),
+    completedMissionIds: [],
     runsCompleted: 0,
   })
   const [debrief, setDebrief] = useState<DebriefReport | null>(null)
@@ -1694,8 +1873,18 @@ function App() {
   const [loadingProgress, setLoadingProgress] = useState(0)
   const [loadingReady, setLoadingReady] = useState(false)
   const [showHullBreachModal, setShowHullBreachModal] = useState(false)
+  const [openMissionId, setOpenMissionId] = useState<string | null>(null)
+  const [missionSuccessId, setMissionSuccessId] = useState<string | null>(null)
   const audioRef = useRef<GameAudioEngine | null>(null)
   const pirateDanger = useMemo(() => getTimeDrivenPirateDangerProfile(hangarClockMs), [hangarClockMs])
+  const activeHangarMission = useMemo(() => getFirstAvailableHangarMission(career), [career])
+  const successHangarMission = missionSuccessId ? getHangarMissionById(missionSuccessId) : null
+  const encounterMission = successHangarMission ?? activeHangarMission
+  const encounterMode: 'request' | 'success' = successHangarMission ? 'success' : 'request'
+  const missionAvailableUnits =
+    encounterMode === 'request' && encounterMission ? getMissionAvailableUnits(career, encounterMission) : 0
+  const canCompleteActiveMission =
+    encounterMode === 'request' && encounterMission ? canCompleteHangarMission(career, encounterMission) : false
 
   useEffect(() => {
     const audio = new GameAudioEngine()
@@ -1817,6 +2006,8 @@ function App() {
     setHud(createHudSnapshot(nextRuntime))
     setDebrief(null)
     setShowHullBreachModal(false)
+    setOpenMissionId(null)
+    setMissionSuccessId(null)
     setScreen('flight')
   }
 
@@ -1881,6 +2072,57 @@ function App() {
     })
   }
 
+  const openHangarMission = () => {
+    if (!encounterMission || encounterMode === 'success') return
+    setOpenMissionId(encounterMission.id)
+  }
+
+  const closeHangarMission = () => {
+    if (missionSuccessId) {
+      setMissionSuccessId(null)
+      return
+    }
+    setOpenMissionId(null)
+  }
+
+  const completeHangarMission = () => {
+    if (!activeHangarMission) return
+    if (!canCompleteHangarMission(career, activeHangarMission)) return
+    setCareer((prev) => {
+      const mission = HANGAR_MISSIONS.find((candidate) => candidate.id === activeHangarMission.id)
+      if (!mission) return prev
+      const stillAvailable =
+        prev.runsCompleted >= mission.availableAfterRuns && !prev.completedMissionIds.includes(mission.id)
+      if (!stillAvailable || !canCompleteHangarMission(prev, mission)) return prev
+
+      const requiredResourceId = mission.requirement.resourceId
+      const requiredUnits = mission.requirement.units
+      const availableUnits = prev.freighterOre[requiredResourceId] ?? 0
+      const nextFreighterOre = {
+        ...prev.freighterOre,
+        [requiredResourceId]: Math.max(0, availableUnits - requiredUnits),
+      }
+
+      let nextInventory = prev.inventory
+      if (mission.reward.kind === 'upgrade') {
+        nextInventory = addUpgradeInventoryItem(
+          nextInventory,
+          mission.reward.key,
+          mission.reward.level,
+          mission.reward.amount,
+        )
+      }
+
+      return {
+        ...prev,
+        freighterOre: nextFreighterOre,
+        inventory: nextInventory,
+        completedMissionIds: [...prev.completedMissionIds, mission.id],
+      }
+    })
+    setMissionSuccessId(activeHangarMission.id)
+  }
+
   const enterHangarFromLoading = () => {
     if (!loadingReady) return
     setHangarClockMs(Date.now())
@@ -1935,6 +2177,16 @@ function App() {
         <div className="hangar-split-divider" />
         <div className="hangar-background" />
         <div className="crt-overlay hangar-crt-overlay" />
+        <HangarMissionEncounter
+          mission={encounterMission}
+          mode={encounterMode}
+          isOpen={encounterMode === 'success' ? true : encounterMission ? openMissionId === encounterMission.id : false}
+          availableUnits={missionAvailableUnits}
+          canComplete={canCompleteActiveMission}
+          onOpen={openHangarMission}
+          onClose={closeHangarMission}
+          onComplete={completeHangarMission}
+        />
         <HangarView
           career={career}
           debrief={debrief}
