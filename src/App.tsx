@@ -6,17 +6,21 @@ import { Bloom, EffectComposer, Noise, Vignette } from '@react-three/postprocess
 import { BackSide, Color, MathUtils, Quaternion, RepeatWrapping, SRGBColorSpace, Vector3 } from 'three'
 import './App.css'
 import {
+  createEmptyResourceUnitCounts,
   FREIGHTER_DOCK_APPROACH_RADIUS,
   FREIGHTER_DOCK_RADIUS,
   canDisembarkEarly,
   createHudSnapshot,
   createRuntime,
+  getResourceDefinitions,
   getPlayerForward,
   stepRuntime,
   triggerEarlyDisembark,
   type GameRuntime,
   type HudSnapshot,
+  type HudResourceTally,
   type ResourceId,
+  type ResourceUnitCounts,
 } from './game/runtime'
 import { useKeyboard } from './game/useKeyboard'
 import { GameAudioEngine } from './audio/gameAudio'
@@ -60,7 +64,9 @@ const HANGAR_BACKDROP_TRAVEL_BOUNDS = {
   wrapPadding: 28,
 }
 
-const ASTEROID_TEXTURE_PATHS: Record<ResourceId | 'depleted', string> = {
+type AsteroidResourceId = Exclude<ResourceId, 'powerball'>
+
+const ASTEROID_TEXTURE_PATHS: Record<AsteroidResourceId | 'depleted', string> = {
   scrapIron: '/assets/textures/generated/asteroid_scrapiron_v1.svg',
   waterIce: '/assets/textures/generated/asteroid_waterice_v1.svg',
   cobaltDust: '/assets/textures/generated/asteroid_cobaltdust_v1.svg',
@@ -78,14 +84,25 @@ interface CareerState {
   deliveredPowerballs: number
   inventory: UpgradeInventory
   loadout: UpgradeLoadout
+  freighterOre: ResourceUnitCounts
   runsCompleted: number
 }
 
 interface DebriefReport {
   status: 'won' | 'lost'
   message: string
-  creditsDelta: number
-  powerballsDelta: number
+  runCollectedResources: HudResourceTally[]
+}
+
+function addTalliesToResourceCounts(
+  base: ResourceUnitCounts,
+  tallies: HudResourceTally[],
+): ResourceUnitCounts {
+  const next = { ...base }
+  for (const tally of tallies) {
+    next[tally.resourceId] = (next[tally.resourceId] ?? 0) + tally.units
+  }
+  return next
 }
 
 interface PirateDangerProfile {
@@ -102,20 +119,21 @@ const PIRATE_DANGER_LEVELS: Array<{ level: number; label: string; maxChance: num
   { level: 5, label: 'Critical', maxChance: 1 },
 ]
 const HULL_BREACH_OUTCOME_REASON = 'Your mining craft vented atmosphere and went dark.'
-const HANGAR_ASTEROID_RESOURCES: ResourceId[] = [
+const HANGAR_ASTEROID_RESOURCES: AsteroidResourceId[] = [
   'scrapIron',
   'waterIce',
   'cobaltDust',
   'xenoCrystal',
   'fringeRelic',
 ]
-const HANGAR_ASTEROID_BASE_COLORS: Record<ResourceId, string> = {
+const HANGAR_ASTEROID_BASE_COLORS: Record<AsteroidResourceId, string> = {
   scrapIron: '#886e52',
   waterIce: '#c2c0b7',
   cobaltDust: '#7c674f',
   xenoCrystal: '#a0ad7d',
   fringeRelic: '#d6bf7e',
 }
+const RESOURCE_DEFS = getResourceDefinitions()
 
 interface HangarBackdropAsteroid {
   id: number
@@ -123,7 +141,7 @@ interface HangarBackdropAsteroid {
   position: Vector3
   velocity: Vector3
   spin: Vector3
-  resourceId: ResourceId
+  resourceId: AsteroidResourceId
   modelIndex: number
 }
 
@@ -1117,6 +1135,9 @@ function HudPanel({
         : 'OUT OF RANGE'
   const grabberDistanceLabel =
     hud.grabberTargetDistance === null ? '--' : `${hud.grabberTargetDistance.toFixed(1)}m`
+  const runMinedUnits = hud.runMinedResources.reduce((sum, entry) => sum + entry.units, 0)
+  const runUnloadedUnits = hud.runUnloadedResources.reduce((sum, entry) => sum + entry.units, 0)
+  const cargoPowerballs = hud.resourceBins.find((bin) => bin.resourceId === 'powerball')?.units ?? 0
 
   return (
     <div className="hud-layout">
@@ -1165,12 +1186,12 @@ function HudPanel({
               </div>
             </div>
             <div>
-              <label>Delivered</label>
-              <strong>{hud.deliveredValue.toLocaleString()} cr</strong>
+              <label>Run Ore Mined</label>
+              <strong>{runMinedUnits} units</strong>
             </div>
             <div>
-              <label>Powerballs Delivered</label>
-              <strong>{hud.deliveredPowerballScore}</strong>
+              <label>Run Ore Unloaded</label>
+              <strong>{runUnloadedUnits} units</strong>
             </div>
             <div>
               <label>Dock State</label>
@@ -1225,13 +1246,9 @@ function HudPanel({
       <div className="hud-stack hud-stack-right">
         <aside className="hud-card hud-card-cargo">
           <h2>Cargo Status</h2>
-          <div>
-            <label>Cargo Value</label>
-            <strong>{hud.cargoValue.toLocaleString()} cr</strong>
-          </div>
           <div className="dock-progress-row">
             <label>Powerballs Aboard</label>
-            <strong>{hud.powerballCargo}</strong>
+            <strong>{cargoPowerballs}</strong>
           </div>
           <div className="dock-progress-row">
             <label>Cargo Hold</label>
@@ -1367,7 +1384,7 @@ function HudPanel({
               <div className="cargo-row" key={bin.resourceId}>
                 <span style={{ color: bin.color }}>{bin.label}</span>
                 <span>
-                  {bin.units}u | {bin.volume} vol | {bin.value} cr
+                  {bin.units}u | {bin.volume} vol
                 </span>
               </div>
             ))}
@@ -1436,6 +1453,7 @@ function HangarView({
   onBuyUpgrade,
   onEquipUpgrade,
   onUnequipUpgrade,
+  onSellFreighterOre,
 }: {
   career: CareerState
   debrief: DebriefReport | null
@@ -1444,9 +1462,24 @@ function HangarView({
   onBuyUpgrade: (key: UpgradeKey, level: number) => void
   onEquipUpgrade: (key: UpgradeKey, level: number) => void
   onUnequipUpgrade: (key: UpgradeKey) => void
+  onSellFreighterOre: (resourceId: ResourceId, mode: 'one' | 'all') => void
 }) {
   const equippedLevels = loadoutToUpgradeLevels(career.loadout)
   const runMods = buildRunModifiers(equippedLevels)
+  const freighterOreRows = Object.entries(career.freighterOre)
+    .map(([resourceId, units]) => ({
+      resourceId: resourceId as ResourceId,
+      units,
+      label: RESOURCE_DEFS[resourceId as ResourceId].label,
+      color: RESOURCE_DEFS[resourceId as ResourceId].color,
+      unitValue: RESOURCE_DEFS[resourceId as ResourceId].value,
+    }))
+    .filter((entry) => entry.units > 0)
+    .sort((a, b) => b.units - a.units)
+  const freighterOreCreditValue = freighterOreRows
+    .filter((entry) => entry.resourceId !== 'powerball')
+    .reduce((sum, entry) => sum + entry.units * entry.unitValue, 0)
+  const freighterPowerballs = career.freighterOre.powerball ?? 0
 
   return (
     <div className="hangar-view">
@@ -1490,16 +1523,53 @@ function HangarView({
           <section className="hud-card hangar-debrief">
             <h2>{debrief.status === 'won' ? 'Run Debrief: Success' : 'Run Debrief: Failure'}</h2>
             <p>{debrief.message}</p>
-            {debrief.status === 'won' && (
-              <p className="subtle">
-                Banked this run: +{debrief.creditsDelta.toLocaleString()} credits, +{debrief.powerballsDelta} powerballs
-              </p>
-            )}
             {debrief.status === 'lost' && (
               <p className="subtle">Equipped loadout hardware was lost. Unequipped inventory remains in storage.</p>
             )}
+            <h2>Run Ore Collection</h2>
+            {debrief.runCollectedResources.length === 0 && (
+              <p className="subtle">No ore was collected during this run.</p>
+            )}
+            {debrief.runCollectedResources.map((entry) => (
+              <div className="cargo-row" key={`debrief-${entry.resourceId}`}>
+                <span style={{ color: entry.color }}>{entry.label}</span>
+                <span>{entry.units} units</span>
+              </div>
+            ))}
           </section>
         )}
+
+        <section className="hud-card hangar-freighter-inventory">
+          <h2>Freighter Ore Inventory</h2>
+          <p className="subtle">Unloaded cargo is stored here until sold for credits or prestige.</p>
+          <div className="dock-progress-row">
+            <label>Estimated Sale Value</label>
+            <strong>{freighterOreCreditValue.toLocaleString()} cr</strong>
+          </div>
+          <div className="dock-progress-row">
+            <label>Stored Powerballs</label>
+            <strong>{freighterPowerballs} prestige potential</strong>
+          </div>
+          {freighterOreRows.length === 0 && <p className="subtle">No ore in freighter stores.</p>}
+          {freighterOreRows.map((entry) => (
+            <div className="hangar-freighter-row" key={`store-${entry.resourceId}`}>
+              <div className="hangar-freighter-meta">
+                <strong style={{ color: entry.color }}>{entry.label}</strong>
+                <span>
+                  {entry.units} units {entry.resourceId === 'powerball' ? '(1 prestige each)' : `(${entry.unitValue} cr each)`}
+                </span>
+              </div>
+              <div className="hangar-freighter-actions">
+                <button className="hangar-upgrade-btn" onClick={() => onSellFreighterOre(entry.resourceId, 'one')}>
+                  {entry.resourceId === 'powerball' ? 'Sell 1 (Prestige)' : 'Sell 1'}
+                </button>
+                <button className="hangar-upgrade-btn" onClick={() => onSellFreighterOre(entry.resourceId, 'all')}>
+                  {entry.resourceId === 'powerball' ? 'Sell All (Prestige)' : 'Sell All'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </section>
 
         <section className="hud-card hangar-launch">
           <h2>Ready Bay</h2>
@@ -1613,6 +1683,7 @@ function App() {
     deliveredPowerballs: 0,
     inventory: createUpgradeInventory(),
     loadout: createUpgradeLoadout(),
+    freighterOre: createEmptyResourceUnitCounts(),
     runsCompleted: 0,
   })
   const [debrief, setDebrief] = useState<DebriefReport | null>(null)
@@ -1680,23 +1751,20 @@ function App() {
 
       if (screen === 'flight' && nextHud.status !== 'active') {
         if (nextHud.status === 'won') {
-          const creditsDelta = nextHud.deliveredValue
-          const powerballsDelta = nextHud.deliveredPowerballScore
           setCareer((prev) => ({
             ...prev,
-            credits: prev.credits + creditsDelta,
-            deliveredPowerballs: prev.deliveredPowerballs + powerballsDelta,
+            freighterOre: addTalliesToResourceCounts(prev.freighterOre, nextHud.runUnloadedResources),
             runsCompleted: prev.runsCompleted + 1,
           }))
           setDebrief({
             status: 'won',
             message: nextHud.outcomeReason,
-            creditsDelta,
-            powerballsDelta,
+            runCollectedResources: nextHud.runMinedResources,
           })
         } else {
           setCareer((prev) => ({
             ...prev,
+            freighterOre: addTalliesToResourceCounts(prev.freighterOre, nextHud.runUnloadedResources),
             inventory: UPGRADE_ORDER.reduce((nextInventory, key) => {
               const equippedLevel = prev.loadout[key]
               if (!equippedLevel || equippedLevel <= 0) return nextInventory
@@ -1708,8 +1776,7 @@ function App() {
           setDebrief({
             status: 'lost',
             message: nextHud.outcomeReason,
-            creditsDelta: 0,
-            powerballsDelta: 0,
+            runCollectedResources: nextHud.runMinedResources,
           })
         }
 
@@ -1793,6 +1860,27 @@ function App() {
     }))
   }
 
+  const sellFreighterOre = (resourceId: ResourceId, mode: 'one' | 'all') => {
+    setCareer((prev) => {
+      const units = Math.max(0, prev.freighterOre[resourceId] ?? 0)
+      if (units <= 0) return prev
+
+      const sellUnits = mode === 'all' ? units : 1
+      const valuePerUnit = RESOURCE_DEFS[resourceId].value
+      const creditsGain = resourceId === 'powerball' ? 0 : sellUnits * valuePerUnit
+      const prestigeGain = resourceId === 'powerball' ? sellUnits : 0
+      return {
+        ...prev,
+        credits: prev.credits + creditsGain,
+        deliveredPowerballs: prev.deliveredPowerballs + prestigeGain,
+        freighterOre: {
+          ...prev.freighterOre,
+          [resourceId]: units - sellUnits,
+        },
+      }
+    })
+  }
+
   const enterHangarFromLoading = () => {
     if (!loadingReady) return
     setHangarClockMs(Date.now())
@@ -1855,6 +1943,7 @@ function App() {
           onBuyUpgrade={buyUpgrade}
           onEquipUpgrade={equipUpgrade}
           onUnequipUpgrade={unequipUpgrade}
+          onSellFreighterOre={sellFreighterOre}
         />
       </main>
     )

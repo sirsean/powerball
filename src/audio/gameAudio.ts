@@ -13,7 +13,7 @@ type AudioSnapshot = {
 
 type ResourceCounts = Record<ResourceId, number>
 
-const RESOURCE_IDS: ResourceId[] = ['scrapIron', 'waterIce', 'cobaltDust', 'xenoCrystal', 'fringeRelic']
+const RESOURCE_IDS: ResourceId[] = ['scrapIron', 'waterIce', 'cobaltDust', 'xenoCrystal', 'fringeRelic', 'powerball']
 
 function createEmptyResourceCounts(): ResourceCounts {
   return {
@@ -22,6 +22,7 @@ function createEmptyResourceCounts(): ResourceCounts {
     cobaltDust: 0,
     xenoCrystal: 0,
     fringeRelic: 0,
+    powerball: 0,
   }
 }
 
@@ -574,6 +575,11 @@ export class GameAudioEngine {
         this.playTone({ frequency: 392, duration: 0.1, volume: 0.075, type: 'sine', when })
         this.playTone({ frequency: 584, duration: 0.13, volume: 0.06, type: 'sine', when: when + 0.06 })
         break
+      case 'powerball':
+        this.playTone({ frequency: 520, duration: 0.11, volume: 0.075, type: 'triangle', when })
+        this.playTone({ frequency: 780, duration: 0.12, volume: 0.07, type: 'triangle', when: when + 0.06 })
+        this.playTone({ frequency: 1040, duration: 0.16, volume: 0.055, type: 'sine', when: when + 0.14 })
+        break
     }
   }
 
@@ -886,6 +892,7 @@ export class GameAudioEngine {
       cobaltDust: runtime.cargoBins.cobaltDust.units,
       xenoCrystal: runtime.cargoBins.xenoCrystal.units,
       fringeRelic: runtime.cargoBins.fringeRelic.units,
+      powerball: runtime.cargoBins.powerball.units,
     }
   }
 

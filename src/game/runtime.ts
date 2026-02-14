@@ -6,6 +6,8 @@ export type ResourceId =
   | 'cobaltDust'
   | 'xenoCrystal'
   | 'fringeRelic'
+  | 'powerball'
+export type OreResourceId = Exclude<ResourceId, 'powerball'>
 
 export interface ResourceDef {
   id: ResourceId
@@ -21,6 +23,8 @@ export interface CargoBin {
   volume: number
   value: number
 }
+
+export type ResourceUnitCounts = Record<ResourceId, number>
 
 export interface EventEntry {
   id: number
@@ -40,10 +44,10 @@ export interface AsteroidSim {
   rotationSpeed: Vector3
   oreReserve: number
   maxOreReserve: number
-  primaryResourceId: ResourceId
+  primaryResourceId: OreResourceId
   hasPowerball: boolean
   powerballRecovered: boolean
-  composition: Array<{ resourceId: ResourceId; weight: number }>
+  composition: Array<{ resourceId: OreResourceId; weight: number }>
   baseColor: string
 }
 
@@ -93,8 +97,8 @@ export interface GameRuntime {
   cargoCapacity: number
   cargoValue: number
   deliveredValue: number
-  powerballCargo: number
-  deliveredPowerballScore: number
+  runMinedUnits: ResourceUnitCounts
+  runUnloadedUnits: ResourceUnitCounts
   weaponAmmo: number
   weaponMaxAmmo: number
   weaponDamage: number
@@ -130,6 +134,13 @@ export interface HudResourceBin {
   color: string
 }
 
+export interface HudResourceTally {
+  resourceId: ResourceId
+  label: string
+  units: number
+  color: string
+}
+
 export interface HudSnapshot {
   runId: number
   status: GameStatus
@@ -143,8 +154,8 @@ export interface HudSnapshot {
   cargoCapacity: number
   cargoValue: number
   deliveredValue: number
-  powerballCargo: number
-  deliveredPowerballScore: number
+  runMinedResources: HudResourceTally[]
+  runUnloadedResources: HudResourceTally[]
   distanceToFreighter: number
   freighterRelativeAngleDeg: number
   docked: boolean
@@ -306,6 +317,13 @@ const RESOURCES: Record<ResourceId, ResourceDef> = {
     volume: 6,
     color: '#d6bf7e',
   },
+  powerball: {
+    id: 'powerball',
+    label: 'Powerball',
+    value: 420,
+    volume: 1,
+    color: '#7c4ca6',
+  },
 }
 
 const MIN_RESOURCE_VOLUME = Math.min(...Object.values(RESOURCES).map((resource) => resource.volume))
@@ -343,6 +361,18 @@ function createCargoBins(): Record<ResourceId, CargoBin> {
     cobaltDust: { resourceId: 'cobaltDust', units: 0, volume: 0, value: 0 },
     xenoCrystal: { resourceId: 'xenoCrystal', units: 0, volume: 0, value: 0 },
     fringeRelic: { resourceId: 'fringeRelic', units: 0, volume: 0, value: 0 },
+    powerball: { resourceId: 'powerball', units: 0, volume: 0, value: 0 },
+  }
+}
+
+export function createEmptyResourceUnitCounts(): ResourceUnitCounts {
+  return {
+    scrapIron: 0,
+    waterIce: 0,
+    cobaltDust: 0,
+    xenoCrystal: 0,
+    fringeRelic: 0,
+    powerball: 0,
   }
 }
 
@@ -382,7 +412,7 @@ function createAsteroid(rng: () => number, id: number, oreQualityBias: number): 
     { item: 'fringeRelic' as const, weight: Math.max(1, 4 * (1 + 1.7 * qualityBias)) },
   ])
 
-  const composition: Array<{ resourceId: ResourceId; weight: number }> = [
+  const composition: Array<{ resourceId: OreResourceId; weight: number }> = [
     { resourceId: primary, weight: 0.56 + qualityBias * 0.14 },
     { resourceId: 'scrapIron', weight: Math.max(0.08, 0.17 - qualityBias * 0.09) },
     { resourceId: 'waterIce', weight: Math.max(0.09, 0.13 - qualityBias * 0.04) },
@@ -472,8 +502,8 @@ export function createRuntime(seed = Date.now(), modifiers: Partial<RunModifiers
     cargoCapacity: runMods.cargoCapacity,
     cargoValue: 0,
     deliveredValue: 0,
-    powerballCargo: 0,
-    deliveredPowerballScore: 0,
+    runMinedUnits: createEmptyResourceUnitCounts(),
+    runUnloadedUnits: createEmptyResourceUnitCounts(),
     weaponAmmo: runMods.weaponAmmo,
     weaponMaxAmmo: runMods.weaponAmmo,
     weaponDamage: runMods.weaponDamage,
@@ -640,7 +670,7 @@ function applyFreighterDockActions(runtime: GameRuntime, keys: Record<string, bo
   runtime.throttleLevel = 0
   clearGrabber(runtime)
   runtime.unloadAccumulator = 0
-  runtime.dockUnloadStartUnits = getCargoUnitCount(runtime) + runtime.powerballCargo
+  runtime.dockUnloadStartUnits = getCargoUnitCount(runtime)
   runtime.dockRepairStartDeficit = Math.max(0, runtime.maxHull - runtime.hull)
   addEvent(runtime, 'Docking complete. Cargo transfer and repairs underway.', 'good')
 }
@@ -891,7 +921,7 @@ function moveGrabbedAsteroid(runtime: GameRuntime) {
   asteroid.velocity.copy(runtime.playerVelocity)
 }
 
-function sampleAsteroidResource(runtime: GameRuntime, asteroid: AsteroidSim): ResourceId {
+function sampleAsteroidResource(runtime: GameRuntime, asteroid: AsteroidSim): OreResourceId {
   const roll = runtime.rng()
   let cursor = 0
   for (const candidate of asteroid.composition) {
@@ -923,6 +953,7 @@ function addCargo(runtime: GameRuntime, resourceId: ResourceId, units: number) {
 
   runtime.cargoUsed += volume
   runtime.cargoValue += acceptedUnits * def.value
+  runtime.runMinedUnits[resourceId] += acceptedUnits
   return acceptedUnits
 }
 
@@ -971,26 +1002,18 @@ function updateDockedSystems(runtime: GameRuntime, dt: number) {
   clearGrabber(runtime)
   runtime.drillActive = false
 
-  const hadCargoBefore = runtime.cargoValue > 0 || runtime.powerballCargo > 0
+  const hadCargoBefore = getCargoUnitCount(runtime) > 0
   runtime.unloadAccumulator += dt * DOCK_UNLOAD_UNITS_PER_SECOND
 
   while (runtime.unloadAccumulator >= 1) {
-    if (runtime.powerballCargo > 0) {
-      runtime.powerballCargo -= 1
-      runtime.deliveredPowerballScore += 1
-      runtime.unloadAccumulator -= 1
-      addEvent(runtime, 'Powerball transferred to freighter vault. Delivered score +1.', 'good')
-      continue
-    }
-
     const resourceId = takeCargoUnitForUnload(runtime)
     if (!resourceId) break
 
     runtime.unloadAccumulator -= 1
-    runtime.deliveredValue += RESOURCES[resourceId].value
+    runtime.runUnloadedUnits[resourceId] += 1
   }
 
-  if (hadCargoBefore && runtime.cargoValue <= 0 && runtime.powerballCargo <= 0) {
+  if (hadCargoBefore && getCargoUnitCount(runtime) <= 0) {
     addEvent(runtime, 'Cargo unload complete. Hold is now empty.', 'good')
   }
 
@@ -1105,9 +1128,13 @@ function updateDrill(runtime: GameRuntime, dt: number, keys: Record<string, bool
     }
 
     if (asteroid.hasPowerball && !asteroid.powerballRecovered) {
-      asteroid.powerballRecovered = true
-      runtime.powerballCargo += 1
-      addEvent(runtime, 'Powerball recovered. Stowed aboard for delivery.', 'good')
+      const acceptedPowerball = addCargo(runtime, 'powerball', 1)
+      if (acceptedPowerball > 0) {
+        asteroid.powerballRecovered = true
+        addEvent(runtime, 'Powerball recovered. Stowed aboard for delivery.', 'good')
+      } else {
+        addEvent(runtime, 'Powerball detected, but cargo hold is full.', 'alert')
+      }
     }
 
     asteroid.oreReserve -= 1
@@ -1434,10 +1461,22 @@ function createHudResourceBins(runtime: GameRuntime): HudResourceBin[] {
     }))
 }
 
+function createHudResourceTallies(counts: ResourceUnitCounts): HudResourceTally[] {
+  return Object.entries(counts)
+    .map(([resourceId, units]) => ({
+      resourceId: resourceId as ResourceId,
+      label: RESOURCES[resourceId as ResourceId].label,
+      units,
+      color: RESOURCES[resourceId as ResourceId].color,
+    }))
+    .filter((entry) => entry.units > 0)
+    .sort((a, b) => b.units - a.units)
+}
+
 export function createHudSnapshot(runtime: GameRuntime): HudSnapshot {
   const pirateBoardEta =
     runtime.pirateState === 'incoming' ? Math.max(0, runtime.pirateBoardTimer) : Infinity
-  const cargoUnits = getCargoUnitCount(runtime) + runtime.powerballCargo
+  const cargoUnits = getCargoUnitCount(runtime)
   const currentHullDeficit = Math.max(0, runtime.maxHull - runtime.hull)
   const dockUnloadProgress =
     runtime.dockUnloadStartUnits <= 0
@@ -1474,8 +1513,8 @@ export function createHudSnapshot(runtime: GameRuntime): HudSnapshot {
     cargoCapacity: runtime.cargoCapacity,
     cargoValue: runtime.cargoValue,
     deliveredValue: runtime.deliveredValue,
-    powerballCargo: runtime.powerballCargo,
-    deliveredPowerballScore: runtime.deliveredPowerballScore,
+    runMinedResources: createHudResourceTallies(runtime.runMinedUnits),
+    runUnloadedResources: createHudResourceTallies(runtime.runUnloadedUnits),
     distanceToFreighter: runtime.playerPosition.distanceTo(runtime.freighterPosition),
     freighterRelativeAngleDeg,
     docked: runtime.docked,

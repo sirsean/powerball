@@ -101,6 +101,45 @@ canvas {
   width: 100%;
 }
 
+.hangar-freighter-inventory {
+  width: 100%;
+}
+
+.hangar-freighter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: center;
+  border: 1px solid rgb(126 100 75 / 34%);
+  background: linear-gradient(180deg, rgb(27 34 41 / 42%) 0%, rgb(18 23 28 / 38%) 100%);
+  border-radius: 0.28rem;
+  padding: 0.45rem 0.55rem;
+  margin-top: 0.45rem;
+}
+
+.hangar-freighter-meta {
+  display: grid;
+  gap: 0.08rem;
+}
+
+.hangar-freighter-meta span {
+  font-size: 0.75rem;
+  color: #b9aca0;
+}
+
+.hangar-freighter-actions {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 0.35rem;
+}
+
+.hangar-freighter-actions .hangar-upgrade-btn {
+  margin-top: 0;
+  width: max-content;
+  min-width: 8.1rem;
+  padding: 0.43rem 0.52rem;
+}
+
 .hangar-upgrades {
   width: 100%;
   display: grid;
@@ -778,6 +817,19 @@ canvas {
   .hangar-upgrade-layout {
     grid-template-columns: 1fr;
     gap: 0.6rem;
+  }
+
+  .hangar-freighter-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .hangar-freighter-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .hangar-freighter-actions .hangar-upgrade-btn {
+    width: 100%;
   }
 
   .hangar-upgrade-level-row {
