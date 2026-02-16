@@ -58,6 +58,8 @@ const MISSION_MERCENARY_IMAGE_PATH = '/assets/encounters/mission-railgun-mercena
 const MISSION_MERCENARY_SUCCESS_IMAGE_PATH = '/assets/encounters/mission-railgun-mercenary-success-v1.png'
 const MISSION_RELIC_DRIFTER_IMAGE_PATH = '/assets/encounters/mission-relic-drifter-start-v1.png'
 const MISSION_RELIC_DRIFTER_SUCCESS_IMAGE_PATH = '/assets/encounters/mission-relic-drifter-success-v1.png'
+const MISSION_THEOCRACY_BOUNTY_IMAGE_PATH = '/assets/encounters/mission-theocracy-bounty-start-v1.png'
+const MISSION_THEOCRACY_BOUNTY_SUCCESS_IMAGE_PATH = '/assets/encounters/mission-theocracy-bounty-success-v1.png'
 const HANGAR_BACKDROP_SEED = 0x4f726531
 const HANGAR_BACKDROP_ASTEROID_COUNT = 22
 const HANGAR_BAY_DOOR_X = 44
@@ -215,6 +217,37 @@ const HANGAR_ASTEROID_BASE_COLORS: Record<AsteroidResourceId, string> = {
 }
 const RESOURCE_DEFS = getResourceDefinitions()
 const HANGAR_MISSIONS: HangarMissionDef[] = [
+  {
+    id: 'theocracy-science-bounty',
+    title: 'Silence The Discovery',
+    requesterName: 'Theocracy Bounty Hunter',
+    availableAfterRuns: 5,
+    portraitPath: MISSION_THEOCRACY_BOUNTY_IMAGE_PATH,
+    successPortraitPath: MISSION_THEOCRACY_BOUNTY_SUCCESS_IMAGE_PATH,
+    encounterText: [
+      "I'm hunting a knot of scientists before they publish a finding that would bring the high priests of my homeworld to ruin.",
+      "The priests would stop them first, of course. But I need names and faces, and time is bleeding out before their publication window opens.",
+      "Scientists can't resist learning. Bring me enough Xeno Crystals and I'll bait them into the open. Do that, and I'll hand you some gear that's better for hunting pirates than men of science.",
+    ],
+    successText: [
+      "Perfect. This is more than enough to make curious minds show themselves.",
+      "You've saved the Bountiful Theocracy Of The Eye from a blasphemous revelation.",
+      "You will forever be welcome in our temples. Take these weapons and hunt well.",
+    ],
+    requirements: [
+      {
+        resourceId: 'xenoCrystal',
+        units: 10,
+      },
+    ],
+    reward: {
+      kind: 'upgrade',
+      key: 'weapons',
+      level: 1,
+      amount: 1,
+    },
+    rewardLabel: '1x Raider Countermeasures (Level 1)',
+  },
   {
     id: 'stolen-relic-recovery',
     title: 'The Greed Of Men',
