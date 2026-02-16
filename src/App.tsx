@@ -54,6 +54,8 @@ const GRABBER_ARM_TARGET_OVERREACH = 0.35
 const CAPTAIN_IMAGE_PATH = '/assets/references/captain-roddard-harbarth.png'
 const MISSION_SUPPLICANT_IMAGE_PATH = '/assets/encounters/water-ice-family-appeal-v1.png'
 const MISSION_SUPPLICANT_SUCCESS_IMAGE_PATH = '/assets/encounters/water-ice-family-success-v1.png'
+const MISSION_MERCENARY_IMAGE_PATH = '/assets/encounters/mission-railgun-mercenary-start-v1.png'
+const MISSION_MERCENARY_SUCCESS_IMAGE_PATH = '/assets/encounters/mission-railgun-mercenary-success-v1.png'
 const HANGAR_BACKDROP_SEED = 0x4f726531
 const HANGAR_BACKDROP_ASTEROID_COUNT = 22
 const HANGAR_BAY_DOOR_X = 44
@@ -118,9 +120,18 @@ interface HangarMissionDef {
   successPortraitPath: string
   encounterText: string[]
   successText: string[]
-  requirement: HangarMissionRequirement
+  requirements: HangarMissionRequirement[]
   reward: HangarMissionRewardUpgrade
   rewardLabel: string
+}
+
+interface HangarMissionRequirementProgress {
+  resourceId: ResourceId
+  label: string
+  color: string
+  requiredUnits: number
+  availableUnits: number
+  missingUnits: number
 }
 
 function addTalliesToResourceCounts(
@@ -147,12 +158,22 @@ function getHangarMissionById(id: string): HangarMissionDef | null {
   return HANGAR_MISSIONS.find((mission) => mission.id === id) ?? null
 }
 
-function getMissionAvailableUnits(career: CareerState, mission: HangarMissionDef) {
-  return Math.max(0, career.freighterOre[mission.requirement.resourceId] ?? 0)
+function getMissionRequirementProgress(career: CareerState, mission: HangarMissionDef): HangarMissionRequirementProgress[] {
+  return mission.requirements.map((requirement) => {
+    const availableUnits = Math.max(0, career.freighterOre[requirement.resourceId] ?? 0)
+    return {
+      resourceId: requirement.resourceId,
+      label: RESOURCE_DEFS[requirement.resourceId].label,
+      color: RESOURCE_DEFS[requirement.resourceId].color,
+      requiredUnits: requirement.units,
+      availableUnits,
+      missingUnits: Math.max(0, requirement.units - availableUnits),
+    }
+  })
 }
 
 function canCompleteHangarMission(career: CareerState, mission: HangarMissionDef) {
-  return getMissionAvailableUnits(career, mission) >= mission.requirement.units
+  return getMissionRequirementProgress(career, mission).every((progress) => progress.missingUnits <= 0)
 }
 
 interface PirateDangerProfile {
@@ -186,6 +207,42 @@ const HANGAR_ASTEROID_BASE_COLORS: Record<AsteroidResourceId, string> = {
 const RESOURCE_DEFS = getResourceDefinitions()
 const HANGAR_MISSIONS: HangarMissionDef[] = [
   {
+    id: 'railgun-ammo-mercenary',
+    title: 'Dry Rail',
+    requesterName: 'Disarmed Mercenary',
+    availableAfterRuns: 5,
+    portraitPath: MISSION_MERCENARY_IMAGE_PATH,
+    successPortraitPath: MISSION_MERCENARY_SUCCESS_IMAGE_PATH,
+    encounterText: [
+      "Harbarth swore I'd board with my gun. He never said I'd be stripped down to an empty chamber.",
+      "A gun-for-hire without rounds is just a corpse waiting for paperwork. Iron and cobalt are all I need to cut fresh slugs for my rail.",
+      "Bring me enough feedstock and I'll hand over a reinforced prow rig I've been keeping in my locker.",
+    ],
+    successText: [
+      'That did it. Rail is singing again.',
+      "You gave me my edge back. I don't forget debts paid in steel.",
+      "That prow rig is yours now. If anyone asks, you're a partner in this car.",
+      "Now I've got a private chat to have with Harbarth. He'll hear me before he sees me.",
+    ],
+    requirements: [
+      {
+        resourceId: 'scrapIron',
+        units: 12,
+      },
+      {
+        resourceId: 'cobaltDust',
+        units: 8,
+      },
+    ],
+    reward: {
+      kind: 'upgrade',
+      key: 'rammer',
+      level: 2,
+      amount: 1,
+    },
+    rewardLabel: '1x Ramming Prow (Level 2)',
+  },
+  {
     id: 'family-compressor-water-ice',
     title: 'Cold Chain Emergency',
     requesterName: 'Frightened Passenger',
@@ -202,10 +259,12 @@ const HANGAR_MISSIONS: HangarMissionDef[] = [
       "You saved my family out here in the dark, and I will never forget it.",
       "When we make planetside, look me up. You'll always be a friend to me and mine.",
     ],
-    requirement: {
-      resourceId: 'waterIce',
-      units: 15,
-    },
+    requirements: [
+      {
+        resourceId: 'waterIce',
+        units: 15,
+      },
+    ],
     reward: {
       kind: 'upgrade',
       key: 'hull',
@@ -1480,7 +1539,7 @@ function HangarMissionEncounter({
   mission,
   mode,
   isOpen,
-  availableUnits,
+  requirementProgress,
   canComplete,
   onOpen,
   onClose,
@@ -1489,7 +1548,7 @@ function HangarMissionEncounter({
   mission: HangarMissionDef | null
   mode: 'request' | 'success'
   isOpen: boolean
-  availableUnits: number
+  requirementProgress: HangarMissionRequirementProgress[]
   canComplete: boolean
   onOpen: () => void
   onClose: () => void
@@ -1498,9 +1557,8 @@ function HangarMissionEncounter({
   if (!mission) return null
 
   const isSuccessMode = mode === 'success'
-  const requirementDef = RESOURCE_DEFS[mission.requirement.resourceId]
-  const missingUnits = Math.max(0, mission.requirement.units - availableUnits)
-  const canSubmit = canComplete && missingUnits <= 0
+  const missingRequirements = requirementProgress.filter((progress) => progress.missingUnits > 0)
+  const canSubmit = canComplete && missingRequirements.length <= 0
 
   if (!isOpen && !isSuccessMode) {
     return (
@@ -1542,23 +1600,25 @@ function HangarMissionEncounter({
 
       {!isSuccessMode && (
         <div className="hangar-encounter-delivery">
-          <div className="dock-progress-row">
-            <label>Required Delivery</label>
-            <strong>
-              {mission.requirement.units}u {requirementDef.label}
-            </strong>
-          </div>
-          <div className="dock-progress-row">
-            <label>Freighter Inventory</label>
-            <strong>{availableUnits}u available</strong>
-          </div>
+          {requirementProgress.map((progress) => (
+            <div className="dock-progress-row" key={`${mission.id}-req-${progress.resourceId}`}>
+              <label>Required {progress.label}</label>
+              <strong style={{ color: progress.color }}>
+                {progress.requiredUnits}u needed / {progress.availableUnits}u available
+              </strong>
+            </div>
+          ))}
           <div className="dock-progress-row">
             <label>Mission Reward</label>
             <strong>{mission.rewardLabel}</strong>
           </div>
-          {!canComplete && (
+          {!canComplete && missingRequirements.length > 0 && (
             <p className="subtle">
-              Need {missingUnits} more units of {requirementDef.label} before this mission can be completed.
+              Missing:{' '}
+              {missingRequirements
+                .map((progress) => `${progress.missingUnits}u ${progress.label}`)
+                .join(', ')}{' '}
+              before this mission can be completed.
             </p>
           )}
         </div>
@@ -1881,8 +1941,8 @@ function App() {
   const successHangarMission = missionSuccessId ? getHangarMissionById(missionSuccessId) : null
   const encounterMission = successHangarMission ?? activeHangarMission
   const encounterMode: 'request' | 'success' = successHangarMission ? 'success' : 'request'
-  const missionAvailableUnits =
-    encounterMode === 'request' && encounterMission ? getMissionAvailableUnits(career, encounterMission) : 0
+  const missionRequirementProgress =
+    encounterMode === 'request' && encounterMission ? getMissionRequirementProgress(career, encounterMission) : []
   const canCompleteActiveMission =
     encounterMode === 'request' && encounterMission ? canCompleteHangarMission(career, encounterMission) : false
 
@@ -2095,12 +2155,10 @@ function App() {
         prev.runsCompleted >= mission.availableAfterRuns && !prev.completedMissionIds.includes(mission.id)
       if (!stillAvailable || !canCompleteHangarMission(prev, mission)) return prev
 
-      const requiredResourceId = mission.requirement.resourceId
-      const requiredUnits = mission.requirement.units
-      const availableUnits = prev.freighterOre[requiredResourceId] ?? 0
-      const nextFreighterOre = {
-        ...prev.freighterOre,
-        [requiredResourceId]: Math.max(0, availableUnits - requiredUnits),
+      const nextFreighterOre = { ...prev.freighterOre }
+      for (const requirement of mission.requirements) {
+        const availableUnits = prev.freighterOre[requirement.resourceId] ?? 0
+        nextFreighterOre[requirement.resourceId] = Math.max(0, availableUnits - requirement.units)
       }
 
       let nextInventory = prev.inventory
@@ -2181,7 +2239,7 @@ function App() {
           mission={encounterMission}
           mode={encounterMode}
           isOpen={encounterMode === 'success' ? true : encounterMission ? openMissionId === encounterMission.id : false}
-          availableUnits={missionAvailableUnits}
+          requirementProgress={missionRequirementProgress}
           canComplete={canCompleteActiveMission}
           onOpen={openHangarMission}
           onClose={closeHangarMission}
