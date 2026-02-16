@@ -56,6 +56,8 @@ const MISSION_SUPPLICANT_IMAGE_PATH = '/assets/encounters/water-ice-family-appea
 const MISSION_SUPPLICANT_SUCCESS_IMAGE_PATH = '/assets/encounters/water-ice-family-success-v1.png'
 const MISSION_MERCENARY_IMAGE_PATH = '/assets/encounters/mission-railgun-mercenary-start-v1.png'
 const MISSION_MERCENARY_SUCCESS_IMAGE_PATH = '/assets/encounters/mission-railgun-mercenary-success-v1.png'
+const MISSION_RELIC_DRIFTER_IMAGE_PATH = '/assets/encounters/mission-relic-drifter-start-v1.png'
+const MISSION_RELIC_DRIFTER_SUCCESS_IMAGE_PATH = '/assets/encounters/mission-relic-drifter-success-v1.png'
 const HANGAR_BACKDROP_SEED = 0x4f726531
 const HANGAR_BACKDROP_ASTEROID_COUNT = 22
 const HANGAR_BAY_DOOR_X = 44
@@ -111,6 +113,13 @@ interface HangarMissionRewardUpgrade {
   amount: number
 }
 
+interface HangarMissionRewardPowerballs {
+  kind: 'powerballs'
+  amount: number
+}
+
+type HangarMissionReward = HangarMissionRewardUpgrade | HangarMissionRewardPowerballs
+
 interface HangarMissionDef {
   id: string
   title: string
@@ -121,7 +130,7 @@ interface HangarMissionDef {
   encounterText: string[]
   successText: string[]
   requirements: HangarMissionRequirement[]
-  reward: HangarMissionRewardUpgrade
+  reward: HangarMissionReward
   rewardLabel: string
 }
 
@@ -206,6 +215,35 @@ const HANGAR_ASTEROID_BASE_COLORS: Record<AsteroidResourceId, string> = {
 }
 const RESOURCE_DEFS = getResourceDefinitions()
 const HANGAR_MISSIONS: HangarMissionDef[] = [
+  {
+    id: 'stolen-relic-recovery',
+    title: 'The Greed Of Men',
+    requesterName: 'Relic Drifter',
+    availableAfterRuns: 4,
+    portraitPath: MISSION_RELIC_DRIFTER_IMAGE_PATH,
+    successPortraitPath: MISSION_RELIC_DRIFTER_SUCCESS_IMAGE_PATH,
+    encounterText: [
+      "I crossed three dead systems to pull relics out of the dust and carry them to this contract... and someone crept into my bunk and took them.",
+      "Greed. Dishonor. Now I'm the one marked to pay, and if I land empty after paying this fare, they'll chain me into indenture.",
+      "Find me replacement relics and I'll make it right with you. I swore I'd never wear a debt collar. Help me keep that oath.",
+    ],
+    successText: [
+      "You found them. You've given me a way to walk off this ship on my own feet.",
+      "My patron will get what was promised, and I won't be owned by anyone.",
+      "Take these powerballs. You've earned them, drifter.",
+    ],
+    requirements: [
+      {
+        resourceId: 'fringeRelic',
+        units: 20,
+      },
+    ],
+    reward: {
+      kind: 'powerballs',
+      amount: 2,
+    },
+    rewardLabel: '2x Powerballs',
+  },
   {
     id: 'railgun-ammo-mercenary',
     title: 'Dry Rail',
@@ -2169,6 +2207,8 @@ function App() {
           mission.reward.level,
           mission.reward.amount,
         )
+      } else if (mission.reward.kind === 'powerballs') {
+        nextFreighterOre.powerball = (nextFreighterOre.powerball ?? 0) + mission.reward.amount
       }
 
       return {
