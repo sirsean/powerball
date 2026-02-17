@@ -259,11 +259,18 @@ canvas {
   width: 100%;
 }
 
-.hangar-encounter-button {
+.hangar-encounter-buttons {
   position: absolute;
   right: 1rem;
   bottom: 1rem;
-  z-index: 4;
+  z-index: 5;
+  display: grid;
+  gap: 0.55rem;
+  justify-items: end;
+}
+
+.hangar-encounter-button {
+  position: relative;
   width: 5rem;
   height: 5rem;
   border-radius: 999px;
@@ -276,6 +283,11 @@ canvas {
 
 .hangar-encounter-button:hover {
   filter: brightness(1.05);
+}
+
+.hangar-encounter-button.is-active {
+  border-color: rgb(221 189 133 / 92%);
+  box-shadow: 0 0 26px rgb(226 187 123 / 34%);
 }
 
 .hangar-encounter-button-image {
@@ -918,9 +930,12 @@ canvas {
     pointer-events: auto;
   }
 
-  .hangar-encounter-button {
+  .hangar-encounter-buttons {
     right: 0.75rem;
     bottom: 0.75rem;
+  }
+
+  .hangar-encounter-button {
     width: 4.6rem;
     height: 4.6rem;
   }

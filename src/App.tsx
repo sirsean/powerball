@@ -60,6 +60,8 @@ const MISSION_RELIC_DRIFTER_IMAGE_PATH = '/assets/encounters/mission-relic-drift
 const MISSION_RELIC_DRIFTER_SUCCESS_IMAGE_PATH = '/assets/encounters/mission-relic-drifter-success-v1.png'
 const MISSION_THEOCRACY_BOUNTY_IMAGE_PATH = '/assets/encounters/mission-theocracy-bounty-start-v1.png'
 const MISSION_THEOCRACY_BOUNTY_SUCCESS_IMAGE_PATH = '/assets/encounters/mission-theocracy-bounty-success-v1.png'
+const MISSION_ENGINE_SHADE_IMAGE_PATH = '/assets/encounters/mission-engine-shade-start-v1.png'
+const MISSION_ENGINE_SHADE_SUCCESS_IMAGE_PATH = '/assets/encounters/mission-engine-shade-success-v1.png'
 const HANGAR_BACKDROP_SEED = 0x4f726531
 const HANGAR_BACKDROP_ASTEROID_COUNT = 22
 const HANGAR_BAY_DOOR_X = 44
@@ -120,7 +122,13 @@ interface HangarMissionRewardPowerballs {
   amount: number
 }
 
-type HangarMissionReward = HangarMissionRewardUpgrade | HangarMissionRewardPowerballs
+interface HangarMissionRewardResource {
+  kind: 'resource'
+  resourceId: ResourceId
+  units: number
+}
+
+type HangarMissionReward = HangarMissionRewardUpgrade | HangarMissionRewardPowerballs | HangarMissionRewardResource
 
 interface HangarMissionDef {
   id: string
@@ -156,12 +164,10 @@ function addTalliesToResourceCounts(
   return next
 }
 
-function getFirstAvailableHangarMission(career: CareerState): HangarMissionDef | null {
-  return (
-    HANGAR_MISSIONS.find(
-      (mission) =>
-        career.runsCompleted >= mission.availableAfterRuns && !career.completedMissionIds.includes(mission.id),
-    ) ?? null
+function getAvailableHangarMissions(career: CareerState): HangarMissionDef[] {
+  return HANGAR_MISSIONS.filter(
+    (mission) =>
+      career.runsCompleted >= mission.availableAfterRuns && !career.completedMissionIds.includes(mission.id),
   )
 }
 
@@ -217,6 +223,36 @@ const HANGAR_ASTEROID_BASE_COLORS: Record<AsteroidResourceId, string> = {
 }
 const RESOURCE_DEFS = getResourceDefinitions()
 const HANGAR_MISSIONS: HangarMissionDef[] = [
+  {
+    id: 'engine-room-whisper',
+    title: 'Back To The Darkness',
+    requesterName: 'Engine-Room Drifter',
+    availableAfterRuns: 8,
+    portraitPath: MISSION_ENGINE_SHADE_IMAGE_PATH,
+    successPortraitPath: MISSION_ENGINE_SHADE_SUCCESS_IMAGE_PATH,
+    encounterText: [
+      "Searched the ship from spine to stern, I have. Waiting for where they keep the powerballs, waiting for one to be used.",
+      "Need one, you see. Just one powerball, and I'll have everything I need. You wouldn't happen to have one, would you? A powerball, just one.",
+      "Found all these other things, I have. Things aplenty. No need for them. Bring me that one powerball, and they're yours.",
+    ],
+    successText: [
+      "A fine turn, this is. Exactly what I needed.",
+      "Now they'll never be able to stop him. You have truly done it now.",
+      "Fifty relics for your trouble. And back to the darkness for me.",
+    ],
+    requirements: [
+      {
+        resourceId: 'powerball',
+        units: 1,
+      },
+    ],
+    reward: {
+      kind: 'resource',
+      resourceId: 'fringeRelic',
+      units: 50,
+    },
+    rewardLabel: '50x Fringe Relics',
+  },
   {
     id: 'theocracy-science-bounty',
     title: 'Silence The Discovery',
@@ -1606,13 +1642,33 @@ function HudPanel({
   )
 }
 
+function HangarMissionButton({
+  mission,
+  active,
+  onOpen,
+}: {
+  mission: HangarMissionDef
+  active: boolean
+  onOpen: () => void
+}) {
+  return (
+    <button
+      className={`hangar-encounter-button${active ? ' is-active' : ''}`}
+      onClick={onOpen}
+      aria-label={`Open mission encounter: ${mission.title}`}
+      title={`Mission Encounter: ${mission.title}`}
+    >
+      <img src={mission.portraitPath} alt={mission.requesterName} className="hangar-encounter-button-image" />
+    </button>
+  )
+}
+
 function HangarMissionEncounter({
   mission,
   mode,
   isOpen,
   requirementProgress,
   canComplete,
-  onOpen,
   onClose,
   onComplete,
 }: {
@@ -1621,7 +1677,6 @@ function HangarMissionEncounter({
   isOpen: boolean
   requirementProgress: HangarMissionRequirementProgress[]
   canComplete: boolean
-  onOpen: () => void
   onClose: () => void
   onComplete: () => void
 }) {
@@ -1631,18 +1686,7 @@ function HangarMissionEncounter({
   const missingRequirements = requirementProgress.filter((progress) => progress.missingUnits > 0)
   const canSubmit = canComplete && missingRequirements.length <= 0
 
-  if (!isOpen && !isSuccessMode) {
-    return (
-      <button
-        className="hangar-encounter-button"
-        onClick={onOpen}
-        aria-label={`Open mission encounter: ${mission.title}`}
-        title={`Mission Encounter: ${mission.title}`}
-      >
-        <img src={mission.portraitPath} alt={mission.requesterName} className="hangar-encounter-button-image" />
-      </button>
-    )
-  }
+  if (!isOpen && !isSuccessMode) return null
 
   return (
     <section className="hud-card hangar-encounter-panel">
@@ -2008,7 +2052,11 @@ function App() {
   const [missionSuccessId, setMissionSuccessId] = useState<string | null>(null)
   const audioRef = useRef<GameAudioEngine | null>(null)
   const pirateDanger = useMemo(() => getTimeDrivenPirateDangerProfile(hangarClockMs), [hangarClockMs])
-  const activeHangarMission = useMemo(() => getFirstAvailableHangarMission(career), [career])
+  const availableHangarMissions = useMemo(() => getAvailableHangarMissions(career), [career])
+  const activeHangarMission = useMemo(
+    () => availableHangarMissions.find((mission) => mission.id === openMissionId) ?? null,
+    [availableHangarMissions, openMissionId],
+  )
   const successHangarMission = missionSuccessId ? getHangarMissionById(missionSuccessId) : null
   const encounterMission = successHangarMission ?? activeHangarMission
   const encounterMode: 'request' | 'success' = successHangarMission ? 'success' : 'request'
@@ -2203,14 +2251,16 @@ function App() {
     })
   }
 
-  const openHangarMission = () => {
-    if (!encounterMission || encounterMode === 'success') return
-    setOpenMissionId(encounterMission.id)
+  const openHangarMission = (missionId: string) => {
+    if (encounterMode === 'success') return
+    if (!availableHangarMissions.some((mission) => mission.id === missionId)) return
+    setOpenMissionId(missionId)
   }
 
   const closeHangarMission = () => {
     if (missionSuccessId) {
       setMissionSuccessId(null)
+      setOpenMissionId(null)
       return
     }
     setOpenMissionId(null)
@@ -2242,6 +2292,9 @@ function App() {
         )
       } else if (mission.reward.kind === 'powerballs') {
         nextFreighterOre.powerball = (nextFreighterOre.powerball ?? 0) + mission.reward.amount
+      } else if (mission.reward.kind === 'resource') {
+        nextFreighterOre[mission.reward.resourceId] =
+          (nextFreighterOre[mission.reward.resourceId] ?? 0) + mission.reward.units
       }
 
       return {
@@ -2251,6 +2304,7 @@ function App() {
         completedMissionIds: [...prev.completedMissionIds, mission.id],
       }
     })
+    setOpenMissionId(null)
     setMissionSuccessId(activeHangarMission.id)
   }
 
@@ -2308,13 +2362,24 @@ function App() {
         <div className="hangar-split-divider" />
         <div className="hangar-background" />
         <div className="crt-overlay hangar-crt-overlay" />
+        {encounterMode === 'request' && availableHangarMissions.length > 0 && (
+          <div className="hangar-encounter-buttons">
+            {availableHangarMissions.map((mission) => (
+              <HangarMissionButton
+                key={`mission-button-${mission.id}`}
+                mission={mission}
+                active={openMissionId === mission.id}
+                onOpen={() => openHangarMission(mission.id)}
+              />
+            ))}
+          </div>
+        )}
         <HangarMissionEncounter
           mission={encounterMission}
           mode={encounterMode}
-          isOpen={encounterMode === 'success' ? true : encounterMission ? openMissionId === encounterMission.id : false}
+          isOpen={encounterMode === 'success' ? true : Boolean(activeHangarMission)}
           requirementProgress={missionRequirementProgress}
           canComplete={canCompleteActiveMission}
-          onOpen={openHangarMission}
           onClose={closeHangarMission}
           onComplete={completeHangarMission}
         />
